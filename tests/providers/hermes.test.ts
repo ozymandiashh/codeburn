@@ -266,6 +266,7 @@ skipUnlessSqlite('hermes provider', () => {
       cachedInputTokens: 300,
       reasoningTokens: 25,
       costUSD: 0.12,
+      apiCallCount: 3,
       userMessage: 'Add Hermes support',
       sessionId: 'session-1',
       deduplicationKey: 'hermes:default:session-1',
@@ -297,6 +298,7 @@ skipUnlessSqlite('hermes provider', () => {
         reasoningTokens: 50,
         estimatedCost: null,
         actualCost: null,
+        apiCalls: 0,
         startedAt: 1779549200,
       })
       db.prepare('INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)')
@@ -307,6 +309,31 @@ skipUnlessSqlite('hermes provider', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0]!.costUSD).toBe(calculateCost('claude-sonnet-4-20250514', 1000, 250, 0, 0, 0))
     expect(calls[0]!.reasoningTokens).toBe(50)
+    expect(calls[0]!.apiCallCount).toBe(1)
+  })
+
+  it('uses positive estimated cost when actual cost is an explicit zero', async () => {
+    const dbPath = createHermesDb(tmpDir)
+    withTestDb(dbPath, (db) => {
+      insertSession(db, {
+        id: 'zero-actual-cost-session',
+        model: 'claude-sonnet-4-20250514',
+        inputTokens: 1000,
+        outputTokens: 200,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+        estimatedCost: 0.5,
+        actualCost: 0,
+        startedAt: 1779549200,
+      })
+      db.prepare('INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)')
+        .run('zero-actual-cost-session', 'user', 'Test cost precedence', 1779549201)
+    })
+
+    const calls = await collectCalls(tmpDir, `${dbPath}#hermes-session=zero-actual-cost-session`)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.costUSD).toBe(0.5)
   })
 
   it('does not split multibyte characters when truncating the first user message', async () => {
@@ -355,6 +382,7 @@ skipUnlessSqlite('hermes provider', () => {
       cacheReadInputTokens: 0,
       cacheCreationInputTokens: 0,
       reasoningTokens: 0,
+      apiCallCount: 1,
       userMessage: 'Legacy Hermes DB',
     })
   })
@@ -374,6 +402,7 @@ skipUnlessSqlite('hermes provider', () => {
         reasoningTokens: 5,
         estimatedCost: 0.25,
         actualCost: 0.30,
+        apiCalls: 4,
         startedAt: 1779494400,
         title: 'Root session',
       })
@@ -391,6 +420,7 @@ skipUnlessSqlite('hermes provider', () => {
         reasoningTokens: 17,
         estimatedCost: 0.42,
         actualCost: null,
+        apiCalls: 6,
         startedAt: 1779501600,
         title: 'Profile session',
       })
@@ -422,11 +452,15 @@ skipUnlessSqlite('hermes provider', () => {
     expect(sessions.reduce((sum, session) => sum + session.totalCacheReadTokens, 0)).toBe(41)
     expect(sessions.reduce((sum, session) => sum + session.totalCacheWriteTokens, 0)).toBe(53)
     expect(sessions.reduce((sum, session) => sum + session.totalCostUSD, 0)).toBeCloseTo(0.72)
+    expect(sessions.reduce((sum, session) => sum + session.apiCalls, 0)).toBe(10)
+    expect(projects.reduce((sum, project) => sum + project.totalApiCalls, 0)).toBe(10)
     expect(projects.map(project => project.project).sort()).toEqual(['tmp-profile-project', 'tmp-root-project'])
 
     const modelTokens = sessions.flatMap(session => Object.values(session.modelBreakdown).map(model => model.tokens))
     expect(modelTokens.reduce((sum, tokens) => sum + tokens.outputTokens, 0)).toBe(90)
     expect(modelTokens.reduce((sum, tokens) => sum + tokens.reasoningTokens, 0)).toBe(22)
+    const modelCalls = sessions.flatMap(session => Object.values(session.modelBreakdown).map(model => model.calls))
+    expect(modelCalls.reduce((sum, calls) => sum + calls, 0)).toBe(10)
   })
 
   it('treats sibling profile-like directories as default sessions', async () => {
@@ -475,6 +509,79 @@ skipUnlessSqlite('hermes provider', () => {
     expect(calls[0]).toMatchObject({
       project: 'C--AI_LAB-OPENCLAW',
       projectPath: 'C:\\AI_LAB\\OPENCLAW',
+    })
+  })
+
+  it('ignores assistant-quoted current working directories when inferring project', async () => {
+    const dbPath = createHermesDb(tmpDir)
+    withTestDb(dbPath, (db) => {
+      insertSession(db, {
+        id: 'assistant-cwd-session',
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+        startedAt: 1779549200,
+      })
+      db.prepare('INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)')
+        .run('assistant-cwd-session', 'user', 'Summarize this output', 1779549201)
+      db.prepare('INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)')
+        .run('assistant-cwd-session', 'assistant', 'Current working directory: /tmp/wrong-project', 1779549202)
+    })
+
+    const calls = await collectCalls(tmpDir, `${dbPath}#hermes-session=assistant-cwd-session`)
+    expect(calls[0]).toMatchObject({
+      project: 'default',
+      projectPath: undefined,
+    })
+  })
+
+  it('allows system current working directory messages when inferring project', async () => {
+    const dbPath = createHermesDb(tmpDir)
+    withTestDb(dbPath, (db) => {
+      insertSession(db, {
+        id: 'system-cwd-session',
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+        startedAt: 1779549200,
+      })
+      db.prepare('INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)')
+        .run('system-cwd-session', 'system', 'Current working directory: /tmp/system-project', 1779549201)
+      db.prepare('INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)')
+        .run('system-cwd-session', 'assistant', 'Current working directory: /tmp/wrong-project', 1779549202)
+    })
+
+    const calls = await collectCalls(tmpDir, `${dbPath}#hermes-session=system-cwd-session`)
+    expect(calls[0]).toMatchObject({
+      project: 'tmp-system-project',
+      projectPath: '/tmp/system-project',
+    })
+  })
+
+  it('strips repeated leading separators from inferred project slugs', async () => {
+    const dbPath = createHermesDb(tmpDir)
+    withTestDb(dbPath, (db) => {
+      insertSession(db, {
+        id: 'network-path-session',
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+        startedAt: 1779549200,
+      })
+      db.prepare('INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)')
+        .run('network-path-session', 'user', 'Current working directory: //network/share\nInspect network path', 1779549201)
+    })
+
+    const calls = await collectCalls(tmpDir, `${dbPath}#hermes-session=network-path-session`)
+    expect(calls[0]).toMatchObject({
+      project: 'network-share',
+      projectPath: '//network/share',
     })
   })
 })

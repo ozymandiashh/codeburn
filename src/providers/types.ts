@@ -21,6 +21,7 @@ export type ParsedProviderCall = {
   reasoningTokens: number
   webSearchRequests: number
   costUSD: number
+  apiCallCount?: number
   costIsEstimated?: boolean
   tools: string[]
   bashCommands: string[]

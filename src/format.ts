@@ -1,5 +1,5 @@
 import chalk from 'chalk'
-import type { ProjectSummary } from './types.js'
+import { turnApiCallCount, type ProjectSummary } from './types.js'
 
 // Re-exported from currency.ts so existing imports from './format.js' keep working.
 // The currency-aware version applies exchange rate and symbol automatically.
@@ -48,7 +48,7 @@ export function renderStatusBar(projects: ProjectSummary[]): string {
         if (!bucketTs) continue
         const day = localDateString(new Date(bucketTs))
         const turnCost = turn.assistantCalls.reduce((s, c) => s + c.costUSD, 0)
-        const turnCalls = turn.assistantCalls.length
+        const turnCalls = turnApiCallCount(turn)
         if (day === today) { todayCost += turnCost; todayCalls += turnCalls }
         if (day >= monthStart) { monthCost += turnCost; monthCalls += turnCalls }
       }

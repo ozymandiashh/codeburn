@@ -1,6 +1,6 @@
 import type { DailyEntry } from './daily-cache.js'
 import type { PeriodData } from './menubar-json.js'
-import { CATEGORY_LABELS, type ProjectSummary, type TaskCategory } from './types.js'
+import { CATEGORY_LABELS, apiCallCount, type ProjectSummary, type TaskCategory } from './types.js'
 
 function emptyEntry(date: string): DailyEntry {
   return {
@@ -62,7 +62,8 @@ export function aggregateProjectsIntoDays(projects: ProjectSummary[]): DailyEntr
           const callDay = ensure(callDate)
 
           callDay.cost += call.costUSD
-          callDay.calls += 1
+          const callCount = apiCallCount(call)
+          callDay.calls += callCount
           callDay.inputTokens += call.usage.inputTokens
           callDay.outputTokens += call.usage.outputTokens
           callDay.cacheReadTokens += call.usage.cacheReadInputTokens
@@ -73,7 +74,7 @@ export function aggregateProjectsIntoDays(projects: ProjectSummary[]): DailyEntr
             inputTokens: 0, outputTokens: 0,
             cacheReadTokens: 0, cacheWriteTokens: 0,
           }
-          model.calls += 1
+          model.calls += callCount
           model.cost += call.costUSD
           model.inputTokens += call.usage.inputTokens
           model.outputTokens += call.usage.outputTokens
@@ -82,7 +83,7 @@ export function aggregateProjectsIntoDays(projects: ProjectSummary[]): DailyEntr
           callDay.models[call.model] = model
 
           const provider = callDay.providers[call.provider] ?? { calls: 0, cost: 0 }
-          provider.calls += 1
+          provider.calls += callCount
           provider.cost += call.costUSD
           callDay.providers[call.provider] = provider
         }

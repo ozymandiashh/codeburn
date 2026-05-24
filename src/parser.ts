@@ -34,6 +34,7 @@ import type {
   ToolCall,
   ToolUseBlock,
 } from './types.js'
+import { apiCallCount } from './types.js'
 import { classifyTurn, BASH_TOOLS, EDIT_TOOLS } from './classifier.js'
 import { extractBashCommands } from './bash-utils.js'
 
@@ -1240,13 +1241,14 @@ function buildSessionSummary(
     }
 
     for (const call of turn.assistantCalls) {
+      const callCount = apiCallCount(call)
       totalCost += call.costUSD
       totalInput += call.usage.inputTokens
       totalOutput += call.usage.outputTokens
       totalReasoning += call.usage.reasoningTokens
       totalCacheRead += call.usage.cacheReadInputTokens
       totalCacheWrite += call.usage.cacheCreationInputTokens
-      apiCalls++
+      apiCalls += callCount
 
       const modelKey = getShortModelName(call.model)
       if (!modelBreakdown[modelKey]) {
@@ -1256,7 +1258,7 @@ function buildSessionSummary(
           tokens: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, cachedInputTokens: 0, reasoningTokens: 0, webSearchRequests: 0 },
         }
       }
-      modelBreakdown[modelKey].calls++
+      modelBreakdown[modelKey].calls += callCount
       modelBreakdown[modelKey].costUSD += call.costUSD
       modelBreakdown[modelKey].tokens.inputTokens += call.usage.inputTokens
       modelBreakdown[modelKey].tokens.outputTokens += call.usage.outputTokens
@@ -1568,6 +1570,7 @@ function providerCallToTurn(call: ParsedProviderCall): ParsedTurn {
     model: call.model,
     usage,
     costUSD: call.costUSD,
+    apiCallCount: call.apiCallCount,
     tools,
     mcpTools: extractMcpTools(tools),
     skills: [],
@@ -1605,6 +1608,7 @@ function providerCallToCachedCall(call: ParsedProviderCall): CachedCall {
       cacheCreationOneHourTokens: 0,
     },
     costUSD: (call.provider === 'mistral-vibe' || call.provider === 'antigravity' || call.provider === 'hermes') ? call.costUSD : undefined,
+    apiCallCount: call.apiCallCount,
     speed: call.speed,
     timestamp: call.timestamp,
     tools: call.tools,
@@ -1636,6 +1640,7 @@ function apiCallToCachedCall(call: ParsedApiCall): CachedCall {
     provider: call.provider,
     model: call.model,
     usage: { ...call.usage, cacheCreationOneHourTokens: call.cacheCreationOneHourTokens ?? 0 },
+    apiCallCount: call.apiCallCount,
     speed: call.speed,
     timestamp: call.timestamp,
     tools: call.tools,
@@ -1716,6 +1721,7 @@ function cachedCallToApiCall(call: CachedCall): ParsedApiCall {
       webSearchRequests: u.webSearchRequests,
     },
     costUSD: call.costUSD ?? costUSD,
+    apiCallCount: call.apiCallCount,
     tools: call.tools,
     mcpTools: extractMcpTools(call.tools),
     skills: call.skills,

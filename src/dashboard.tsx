@@ -2,7 +2,7 @@ import { homedir } from 'os'
 
 import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { render, Box, Text, useInput, useApp, useWindowSize } from 'ink'
-import { CATEGORY_LABELS, type DateRange, type ProjectSummary, type TaskCategory } from './types.js'
+import { CATEGORY_LABELS, turnApiCallCount, type DateRange, type ProjectSummary, type TaskCategory } from './types.js'
 import { formatCost, formatTokens } from './format.js'
 import { aggregateModelEfficiency } from './model-efficiency.js'
 import { parseAllSessions, filterProjectsByName } from './parser.js'
@@ -251,7 +251,7 @@ function DailyActivity({ projects, days = 14, pw, bw }: { projects: ProjectSumma
         if (!turn.timestamp) continue
         const day = dateKey(turn.timestamp)
         dailyCosts[day] = (dailyCosts[day] ?? 0) + turn.assistantCalls.reduce((s, c) => s + c.costUSD, 0)
-        dailyCalls[day] = (dailyCalls[day] ?? 0) + turn.assistantCalls.length
+        dailyCalls[day] = (dailyCalls[day] ?? 0) + turnApiCallCount(turn)
       }
     }
   }

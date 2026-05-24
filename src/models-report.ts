@@ -3,7 +3,7 @@ import stripAnsi from 'strip-ansi'
 
 import { formatCost, formatTokens } from './format.js'
 import { getProvider } from './providers/index.js'
-import { CATEGORY_LABELS, type ProjectSummary, type TaskCategory } from './types.js'
+import { CATEGORY_LABELS, apiCallCount, type ProjectSummary, type TaskCategory } from './types.js'
 
 export type ModelReportRow = {
   provider: string
@@ -91,7 +91,7 @@ export async function aggregateModels(projects: ProjectSummary[], opts: Aggregat
           bucket.cacheWriteTokens += call.usage.cacheCreationInputTokens
           bucket.cacheReadTokens += call.usage.cacheReadInputTokens + call.usage.cachedInputTokens
           bucket.costUSD += call.costUSD
-          bucket.calls += 1
+          bucket.calls += apiCallCount(call)
 
           const modelKey = `${provider} ${model}`
           let perCat = perModelCategoryCost.get(modelKey)

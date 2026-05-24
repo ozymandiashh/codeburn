@@ -1,7 +1,7 @@
 import { readdir, readFile } from 'fs/promises'
 import { join } from 'path'
 
-import type { ProjectSummary } from './types.js'
+import { apiCallCount, type ProjectSummary } from './types.js'
 
 const PLANNING_TOOLS = new Set(['TaskCreate', 'TaskUpdate', 'TodoWrite', 'EnterPlanMode', 'ExitPlanMode'])
 
@@ -56,7 +56,7 @@ export function aggregateModelStats(projects: ProjectSummary[]): ModelStats[] {
         for (const call of turn.assistantCalls) {
           if (call.model === '<synthetic>') continue
           const cs = call.model === primaryModel ? ms : ensure(call.model)
-          cs.calls++
+          cs.calls += apiCallCount(call)
           cs.cost += call.costUSD
           cs.outputTokens += call.usage.outputTokens
           cs.inputTokens += call.usage.inputTokens

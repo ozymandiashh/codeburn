@@ -53,6 +53,8 @@ type TableInfoRow = {
 
 type TableColumn = keyof HermesSessionRow | keyof HermesMessageRow
 
+const DISCOVERY_LIMIT = 10000
+
 const toolNameMap: Record<string, string> = {
   terminal: 'Bash',
   execute_code: 'CodeExecution',
@@ -89,7 +91,8 @@ function getHermesHome(override?: string): string {
 function sanitizeProject(raw: string): string {
   const trimmed = raw.trim()
   if (!trimmed) return 'hermes'
-  return trimmed.replace(/^[/\\]/, '').replace(/[:/\\]/g, '-')
+  const sanitized = trimmed.replace(/^[/\\]+/, '').replace(/[:/\\]/g, '-')
+  return sanitized || 'hermes'
 }
 
 function parseProfileName(dbPath: string, hermesHome: string): string {
@@ -250,6 +253,7 @@ function collectTools(messages: HermesMessageRow[]): { tools: string[]; toolSequ
 function inferProject(messages: HermesMessageRow[], fallback: string): { project: string; projectPath?: string } {
   const cwdPattern = /^Current working directory:\s*([a-zA-Z]:\\[^\r\n`"]+|\/[^\r\n`"\\]+)/m
   for (const msg of messages) {
+    if (msg.role === 'assistant' || msg.role === 'tool') continue
     const text = msg.content ?? ''
     const match = cwdPattern.exec(text)
     if (match?.[1]) {
@@ -283,8 +287,12 @@ async function discoverFromDb(dbPath: string, profile: string): Promise<SessionS
               ${numberColumn(columns, 'reasoning_tokens')}
        FROM sessions
        WHERE ${usage} > 0
-       ORDER BY ${orderBy}`,
+       ORDER BY ${orderBy}
+       LIMIT ${DISCOVERY_LIMIT}`,
     )
+    if (rows.length === DISCOVERY_LIMIT) {
+      process.stderr.write(`codeburn: Hermes discovery for ${dbPath} reached the ${DISCOVERY_LIMIT} session limit; older sessions may be omitted.\n`)
+    }
 
     return rows.map(row => ({
       path: encodeSourcePath(dbPath, row.id),
@@ -386,8 +394,15 @@ function createParser(source: SessionSource, seenKeys: Set<string>, hermesHome: 
           cacheReadTokens,
           0,
         )
-        const actualCost = row.actual_cost_usd ?? row.estimated_cost_usd ?? 0
-        const costUSD = actualCost > 0 ? actualCost : calculatedCost
+        const costUSD = (row.actual_cost_usd ?? 0) > 0
+          ? row.actual_cost_usd!
+          : (row.estimated_cost_usd ?? 0) > 0
+            ? row.estimated_cost_usd!
+            : calculatedCost
+        const rawCallCount = row.api_call_count ?? 1
+        const callCount = Number.isFinite(rawCallCount) && rawCallCount > 0
+          ? Math.max(1, Math.floor(rawCallCount))
+          : 1
 
         result = {
           provider: 'hermes',
@@ -400,6 +415,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>, hermesHome: 
           reasoningTokens,
           webSearchRequests: 0,
           costUSD,
+          apiCallCount: callCount,
           tools,
           bashCommands,
           timestamp,

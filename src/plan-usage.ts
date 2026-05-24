@@ -1,7 +1,7 @@
 import { readPlans, type Plan, type PlanMap } from './config.js'
 import { parseAllSessions } from './parser.js'
 import { PLAN_PROVIDERS } from './plans.js'
-import type { DateRange, ProjectSummary } from './types.js'
+import { turnApiCallCount, type DateRange, type ProjectSummary } from './types.js'
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 const PLAN_NEAR_THRESHOLD_PCT = 80
@@ -156,7 +156,7 @@ function getPlanScopedProjects(plan: Plan, projects: ProjectSummary[], today: Da
             (sum, turn) => sum + turn.assistantCalls.reduce((turnSum, call) => turnSum + call.costUSD, 0),
             0,
           )
-          const apiCalls = turns.reduce((sum, turn) => sum + turn.assistantCalls.length, 0)
+          const apiCalls = turns.reduce((sum, turn) => sum + turnApiCallCount(turn), 0)
           return apiCalls > 0 ? { ...session, turns, totalCostUSD, apiCalls } : null
         })
         .filter((session): session is NonNullable<typeof session> => session !== null)

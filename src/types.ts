@@ -74,6 +74,7 @@ export type ParsedApiCall = {
   model: string
   usage: TokenUsage
   costUSD: number
+  apiCallCount?: number
   tools: string[]
   mcpTools: string[]
   skills: string[]
@@ -171,4 +172,15 @@ export const CATEGORY_LABELS: Record<TaskCategory, string> = {
   conversation: 'Conversation',
   brainstorming: 'Brainstorming',
   general: 'General',
+}
+
+export function apiCallCount(call: Pick<ParsedApiCall, 'apiCallCount'>): number {
+  const count = call.apiCallCount
+  return Number.isFinite(count) && count !== undefined && count > 0
+    ? Math.max(1, Math.floor(count))
+    : 1
+}
+
+export function turnApiCallCount(turn: Pick<ParsedTurn, 'assistantCalls'>): number {
+  return turn.assistantCalls.reduce((sum, call) => sum + apiCallCount(call), 0)
 }

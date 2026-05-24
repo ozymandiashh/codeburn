@@ -10,7 +10,7 @@ import { type PeriodData, type ProviderCost, type BreakdownArrays } from './menu
 import { buildMenubarPayload } from './menubar-json.js'
 import { getDaysInRange, ensureCacheHydrated, loadDailyCache, emptyCache, BACKFILL_DAYS, toDateString, type DailyCache } from './daily-cache.js'
 import { aggregateProjectsIntoDays, buildPeriodDataFromDays, dateKey } from './day-aggregator.js'
-import { CATEGORY_LABELS, type DateRange, type ProjectSummary, type TaskCategory } from './types.js'
+import { CATEGORY_LABELS, apiCallCount, type DateRange, type ProjectSummary, type TaskCategory } from './types.js'
 import { aggregateModelEfficiency } from './model-efficiency.js'
 import { renderDashboard } from './dashboard.js'
 import { formatDateRangeLabel, parseDateRangeFlags, getDateRange, toPeriod, type Period } from './cli-date.js'
@@ -209,7 +209,7 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
       }
       for (const call of turn.assistantCalls) {
         dailyMap[day].cost += call.costUSD
-        dailyMap[day].calls += 1
+        dailyMap[day].calls += apiCallCount(call)
       }
     }
   }

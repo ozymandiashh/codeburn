@@ -1,7 +1,7 @@
 import { writeFile, mkdir, readdir, open, stat, rm } from 'fs/promises'
 import { dirname, join, resolve } from 'path'
 
-import { CATEGORY_LABELS, type ProjectSummary, type TaskCategory } from './types.js'
+import { CATEGORY_LABELS, apiCallCount, type ProjectSummary, type TaskCategory } from './types.js'
 import { getCurrency, convertCost, roundForActiveCurrency } from './currency.js'
 import { dateKey } from './day-aggregator.js'
 import { aggregateModelEfficiency } from './model-efficiency.js'
@@ -57,7 +57,7 @@ function buildDailyRows(projects: ProjectSummary[], period: string): Row[] {
         daily[day].sessions.add(session.sessionId)
         for (const call of turn.assistantCalls) {
           daily[day].cost += call.costUSD
-          daily[day].calls++
+          daily[day].calls += apiCallCount(call)
           daily[day].input += call.usage.inputTokens
           daily[day].output += call.usage.outputTokens
           daily[day].cacheRead += call.usage.cacheReadInputTokens
