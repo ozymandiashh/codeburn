@@ -34,7 +34,12 @@ function emptySlice(): ProviderDaySlice {
   }
 }
 
-export function aggregateProjectsIntoDays(projects: ProjectSummary[]): DailyEntry[] {
+/// `resolveDateKey` lets the daily cache re-aggregate a proven subset of turns
+/// under its previous timezone without mutating the process-wide TZ setting.
+export function aggregateProjectsIntoDays(
+  projects: ProjectSummary[],
+  resolveDateKey: (iso: string) => string = dateKey,
+): DailyEntry[] {
   const byDate = new Map<string, DailyEntry>()
   const ensure = (date: string): DailyEntry => {
     let d = byDate.get(date)
@@ -61,7 +66,7 @@ export function aggregateProjectsIntoDays(projects: ProjectSummary[]): DailyEntr
 
   for (const project of projects) {
     for (const session of project.sessions) {
-      const sessionDate = dateKey(session.firstTimestamp)
+      const sessionDate = resolveDateKey(session.firstTimestamp)
       const sessionDay = ensure(sessionDate)
       sessionDay.sessions += 1
       ensureProject(sessionDay, session.project, project.projectPath).sessions += 1
@@ -83,7 +88,7 @@ export function aggregateProjectsIntoDays(projects: ProjectSummary[]): DailyEntr
         // bucketed per-call by each call's own timestamp, so a midnight-
         // straddling turn split across two days and history.daily / the provider
         // breakdown never reconciled to current.cost (a constant offset).
-        const turnDate = dateKey(turn.timestamp || turn.assistantCalls[0]!.timestamp)
+        const turnDate = resolveDateKey(turn.timestamp || turn.assistantCalls[0]!.timestamp)
         const turnDay = ensure(turnDate)
 
         const editTurns = turn.hasEdits ? 1 : 0

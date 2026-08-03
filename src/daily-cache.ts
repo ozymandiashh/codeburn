@@ -636,9 +636,247 @@ export function toDateString(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
+type OptionalDateKeyResolver = (timestamp: string) => string | undefined
+
+/// Build a date-key resolver for an explicit IANA timezone. A bogus/legacy
+/// tzKey disables the surgical migration pass: preserving a possible duplicate
+/// is safer than subtracting from a day we cannot identify exactly.
+function dateKeyResolverForTimeZone(timeZone: string): OptionalDateKeyResolver | undefined {
+  if (!timeZone) return undefined
+  let formatter: Intl.DateTimeFormat
+  try {
+    formatter = new Intl.DateTimeFormat('en-US-u-ca-gregory-nu-latn', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+  } catch {
+    return undefined
+  }
+
+  return (timestamp: string): string | undefined => {
+    const date = new Date(timestamp)
+    if (!Number.isFinite(date.getTime())) return undefined
+    try {
+      let year: string | undefined
+      let month: string | undefined
+      let day: string | undefined
+      for (const part of formatter.formatToParts(date)) {
+        if (part.type === 'year') year = part.value
+        else if (part.type === 'month') month = part.value
+        else if (part.type === 'day') day = part.value
+      }
+      return year && month && day ? `${year}-${month}-${day}` : undefined
+    } catch {
+      return undefined
+    }
+  }
+}
+
+/// Keep only turns whose local calendar day changes between the cache timezone
+/// and the current one. The aggregate envelope is intentionally left intact:
+/// aggregateProjectsIntoDays reads its accounting from turns, while session
+/// counts are ignored by the subtraction below because they are not turn
+/// contributions.
+function projectsWithMovedTimezoneTurns(
+  projects: ProjectSummary[],
+  previousDateKey: OptionalDateKeyResolver,
+  currentDateKey: OptionalDateKeyResolver,
+): ProjectSummary[] {
+  const movedProjects: ProjectSummary[] = []
+  for (const project of projects) {
+    const sessions: ProjectSummary['sessions'] = []
+    for (const session of project.sessions) {
+      const turns = session.turns.filter(turn => {
+        if (turn.assistantCalls.length === 0) return false
+        const timestamp = turn.timestamp || turn.assistantCalls[0]?.timestamp
+        if (!timestamp) return false
+        const previousDay = previousDateKey(timestamp)
+        const currentDay = currentDateKey(timestamp)
+        return previousDay !== undefined && currentDay !== undefined && previousDay !== currentDay
+      })
+      if (turns.length > 0) sessions.push({ ...session, turns })
+    }
+    if (sessions.length > 0) movedProjects.push({ ...project, sessions })
+  }
+  return movedProjects
+}
+
+type SubtractedAmount = { remaining: number; removed: number }
+
+function subtractBounded(currentValue: unknown, requestedValue: unknown): SubtractedAmount {
+  const current = num(currentValue)
+  const requested = num(requestedValue)
+  if (current <= 0 || requested <= 0) return { remaining: current, removed: 0 }
+  const removed = Math.min(current, requested)
+  return { remaining: current - removed, removed }
+}
+
+const TURN_TOTAL_FIELDS = [
+  'calls', 'cost', 'savingsUSD',
+  'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens',
+  'editTurns', 'oneShotTurns',
+] as const
+
+const MODEL_FIELDS = [
+  'calls', 'cost', 'savingsUSD',
+  'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens',
+] as const
+
+function modelHasData(model: ModelDayStats): boolean {
+  return MODEL_FIELDS.some(field => num(model[field]) !== 0)
+}
+
+/// Subtract from a model map and return the exact amount actually removed. The
+/// returned delta is what may safely be removed from the day-level map too.
+function subtractModelContributions(
+  target: Record<string, ModelDayStats> | undefined,
+  contributions: Record<string, ModelDayStats> | undefined,
+): Record<string, ModelDayStats> {
+  const removed: Record<string, ModelDayStats> = {}
+  if (!target || !contributions) return removed
+  for (const [name, contribution] of Object.entries(contributions)) {
+    if (!Object.hasOwn(target, name)) continue
+    const current = target[name]!
+    const taken = emptyModelStats()
+    for (const field of MODEL_FIELDS) {
+      const result = subtractBounded(current[field], contribution[field])
+      current[field] = result.remaining
+      taken[field] = result.removed
+    }
+    if (!modelHasData(current)) delete target[name]
+    if (modelHasData(taken)) setOwn(removed, name, taken)
+  }
+  return removed
+}
+
+const CATEGORY_FIELDS = ['turns', 'cost', 'savingsUSD', 'editTurns', 'oneShotTurns'] as const
+
+function emptyCategoryStats(): CategoryDayStats {
+  return { turns: 0, cost: 0, savingsUSD: 0, editTurns: 0, oneShotTurns: 0 }
+}
+
+function categoryHasData(category: CategoryDayStats): boolean {
+  return CATEGORY_FIELDS.some(field => num(category[field]) !== 0)
+}
+
+function subtractCategoryContributions(
+  target: Record<string, CategoryDayStats> | undefined,
+  contributions: Record<string, CategoryDayStats> | undefined,
+): Record<string, CategoryDayStats> {
+  const removed: Record<string, CategoryDayStats> = {}
+  if (!target || !contributions) return removed
+  for (const [name, contribution] of Object.entries(contributions)) {
+    if (!Object.hasOwn(target, name)) continue
+    const current = target[name]!
+    const taken = emptyCategoryStats()
+    for (const field of CATEGORY_FIELDS) {
+      const result = subtractBounded(current[field], contribution[field])
+      current[field] = result.remaining
+      taken[field] = result.removed
+    }
+    if (!categoryHasData(current)) delete target[name]
+    if (categoryHasData(taken)) setOwn(removed, name, taken)
+  }
+  return removed
+}
+
+const PROJECT_TURN_FIELDS = ['cost', 'calls', 'savingsUSD'] as const
+
+function projectHasData(project: ProjectDayStats): boolean {
+  return project.sessions !== 0 || PROJECT_TURN_FIELDS.some(field => num(project[field]) !== 0)
+}
+
+function subtractProjectContributions(
+  target: Record<string, ProjectDayStats> | undefined,
+  contributions: Record<string, ProjectDayStats> | undefined,
+): Record<string, ProjectDayStats> {
+  const removed: Record<string, ProjectDayStats> = {}
+  if (!target || !contributions) return removed
+  for (const [name, contribution] of Object.entries(contributions)) {
+    if (!Object.hasOwn(target, name)) continue
+    const current = target[name]!
+    const taken: ProjectDayStats = { cost: 0, calls: 0, savingsUSD: 0, sessions: 0 }
+    for (const field of PROJECT_TURN_FIELDS) {
+      const result = subtractBounded(current[field], contribution[field])
+      current[field] = result.remaining
+      taken[field] = result.removed
+    }
+    // Session counts are session-start facts, not contributions of this turn.
+    if (!projectHasData(current)) delete target[name]
+    if (PROJECT_TURN_FIELDS.some(field => taken[field] !== 0)) setOwn(removed, name, taken)
+  }
+  return removed
+}
+
+function providerHasState(slice: ProviderDaySlice): boolean {
+  return TURN_TOTAL_FIELDS.some(field => num(slice[field]) !== 0)
+    || num(slice.sessions) !== 0
+    || Object.keys(slice.models ?? {}).length > 0
+    || Object.keys(slice.categories ?? {}).length > 0
+    || Object.keys(slice.projects ?? {}).length > 0
+}
+
+function providerHasTurnContribution(slice: ProviderDaySlice): boolean {
+  return TURN_TOTAL_FIELDS.some(field => num(slice[field]) !== 0)
+    || Object.values(slice.models ?? {}).some(modelHasData)
+    || Object.values(slice.categories ?? {}).some(categoryHasData)
+    || Object.values(slice.projects ?? {}).some(project => PROJECT_TURN_FIELDS.some(field => num(project[field]) !== 0))
+}
+
+function subtractProviderTurnContribution(day: DailyEntry, provider: string, contribution: ProviderDaySlice): void {
+  if (!Object.hasOwn(day.providers, provider)) return
+  const slice = day.providers[provider]!
+
+  for (const field of TURN_TOTAL_FIELDS) {
+    const result = subtractBounded(slice[field], contribution[field])
+    slice[field] = result.remaining
+    day[field] = subtractBounded(day[field], result.removed).remaining
+  }
+
+  const removedModels = subtractModelContributions(slice.models, contribution.models)
+  subtractModelContributions(day.models, removedModels)
+  const removedCategories = subtractCategoryContributions(slice.categories, contribution.categories)
+  subtractCategoryContributions(day.categories, removedCategories)
+  const removedProjects = subtractProjectContributions(slice.projects, contribution.projects)
+  subtractProjectContributions(day.projects, removedProjects)
+
+  if (!providerHasState(slice)) delete day.providers[provider]
+}
+
+function dayHasState(day: DailyEntry): boolean {
+  return TURN_TOTAL_FIELDS.some(field => day[field] !== 0)
+    || day.sessions !== 0
+    || Object.keys(day.models).length > 0
+    || Object.keys(day.categories).length > 0
+    || Object.keys(day.providers).length > 0
+    || Object.keys(day.projects ?? {}).length > 0
+}
+
+/// Remove only freshly observed turns proven to have moved off their previous
+/// timezone day. Every subtraction is bounded by the matching cached provider
+/// slice; opaque days and unrelated slices/dates remain untouched.
+function subtractMovedTurnContributions(baseline: DailyEntry[], contributions: DailyEntry[]): DailyEntry[] {
+  const adjusted = baseline.map(day => structuredClone(day))
+  const byDate = new Map(adjusted.map(day => [day.date, day]))
+  for (const contributionDay of contributions) {
+    const cachedDay = byDate.get(contributionDay.date)
+    if (!cachedDay || isOpaqueDay(cachedDay)) continue
+    for (const [provider, contribution] of Object.entries(contributionDay.providers)) {
+      if (!providerHasTurnContribution(contribution)) continue
+      subtractProviderTurnContribution(cachedDay, provider, contribution)
+    }
+  }
+  return adjusted.filter(dayHasState)
+}
+
 export async function ensureCacheHydrated(
   parseSessions: (range: DateRange) => Promise<ProjectSummary[]>,
-  aggregateDays: (projects: ProjectSummary[]) => DailyEntry[],
+  aggregateDays: (
+    projects: ProjectSummary[],
+    resolveDateKey?: (timestamp: string) => string,
+  ) => DailyEntry[],
   /// Hash of the active `localModelSavings` config. When this changes
   /// (user re-mapped a baseline) the cached `savingsUSD` totals are no
   /// longer accurate, so we treat the cache as stale and force a full
@@ -693,16 +931,38 @@ export async function ensureCacheHydrated(
       const baseline = c.days
       const backfillStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - BACKFILL_DAYS)
       let freshDays: DailyEntry[] = []
+      let parsedProjects: ProjectSummary[] = []
       if (backfillStart.getTime() <= yesterdayEnd.getTime()) {
-        freshDays = aggregateDays(await parseSessions({ start: backfillStart, end: yesterdayEnd }))
+        parsedProjects = await parseSessions({ start: backfillStart, end: yesterdayEnd })
+        freshDays = aggregateDays(parsedProjects)
       }
       const parseWasComplete = sessionComplete()
+      let mergeBaseline = baseline
+      // Only compare turn amounts from a finalized cache with unchanged
+      // accounting. If another invalidator changed pricing/savings at the same
+      // time, the fresh numeric contribution is not safe to subtract from the
+      // old slice; preservation wins for that mixed invalidation.
+      const hasComparableTurnAccounting = c.complete === true && c.savingsConfigHash === savingsConfigHash
+      if (parseWasComplete && tzChanged && hasComparableTurnAccounting && c.tzKey !== undefined) {
+        const previousDateKey = dateKeyResolverForTimeZone(c.tzKey)
+        const currentDateKey = dateKeyResolverForTimeZone(tzKey)
+        if (previousDateKey && currentDateKey) {
+          const movedProjects = projectsWithMovedTimezoneTurns(parsedProjects, previousDateKey, currentDateKey)
+          if (movedProjects.length > 0) {
+            const movedContributions = aggregateDays(
+              movedProjects,
+              timestamp => previousDateKey(timestamp) ?? '',
+            )
+            mergeBaseline = subtractMovedTurnContributions(baseline, movedContributions)
+          }
+        }
+      }
       // A PARTIAL parse must not overwrite finalized baseline days with
       // undercounts (if their sources die before the next complete parse, the
       // undercount would be what survives). Partial fresh data only fills days
       // and slices the baseline lacks; the next complete parse gets to win.
       const merged = parseWasComplete
-        ? mergeDayEntries(freshDays, baseline, true)
+        ? mergeDayEntries(freshDays, mergeBaseline, true)
         : mergeDayEntries(baseline, freshDays, false)
       c = {
         version: DAILY_CACHE_VERSION,

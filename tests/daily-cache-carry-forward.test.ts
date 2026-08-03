@@ -1,11 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdir, readFile, rename, rm, writeFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
-import type { ProjectSummary } from '../src/types.js'
-import { buildPeriodDataFromDays } from '../src/day-aggregator.js'
+import type { ProjectSummary, TaskCategory } from '../src/types.js'
+import { aggregateProjectsIntoDays, buildPeriodDataFromDays } from '../src/day-aggregator.js'
 
 import {
   DAILY_CACHE_VERSION,
@@ -65,6 +65,90 @@ function daysAgoStr(n: number): string {
 }
 
 const noSessions = async (): Promise<ProjectSummary[]> => []
+
+function projectWithSingleTurn({
+  timestamp,
+  firstTimestamp = timestamp,
+  costUSD,
+  provider,
+  model,
+  sessionId,
+  project = 'p',
+  category = 'coding',
+  hasEdits = false,
+}: {
+  timestamp: string
+  firstTimestamp?: string
+  costUSD: number
+  provider: string
+  model: string
+  sessionId: string
+  project?: string
+  category?: TaskCategory
+  hasEdits?: boolean
+}): ProjectSummary {
+  return {
+    project,
+    projectPath: `/${project}`,
+    totalCostUSD: costUSD,
+    totalSavingsUSD: 0,
+    totalApiCalls: 1,
+    totalProxiedCostUSD: 0,
+    sessions: [{
+      sessionId,
+      project,
+      firstTimestamp,
+      lastTimestamp: timestamp,
+      totalCostUSD: costUSD,
+      totalSavingsUSD: 0,
+      totalInputTokens: 100,
+      totalOutputTokens: 200,
+      totalReasoningTokens: 0,
+      totalCacheReadTokens: 50,
+      totalCacheWriteTokens: 0,
+      apiCalls: 1,
+      turns: [{
+        userMessage: sessionId,
+        timestamp,
+        sessionId,
+        category,
+        retries: 0,
+        hasEdits,
+        assistantCalls: [{
+          provider,
+          model,
+          usage: {
+            inputTokens: 100,
+            outputTokens: 200,
+            cacheCreationInputTokens: 0,
+            cacheReadInputTokens: 50,
+            cachedInputTokens: 0,
+            reasoningTokens: 0,
+            webSearchRequests: 0,
+          },
+          costUSD,
+          tools: [],
+          mcpTools: [],
+          skills: [],
+          subagentTypes: [],
+          hasAgentSpawn: false,
+          hasPlanMode: false,
+          speed: 'standard',
+          timestamp,
+          bashCommands: [],
+          deduplicationKey: `tz-${sessionId}`,
+        }],
+      }],
+      modelBreakdown: {},
+      toolBreakdown: {},
+      mcpBreakdown: {},
+      bashBreakdown: {},
+      categoryBreakdown: {} as never,
+      skillBreakdown: {},
+      subagentBreakdown: {},
+    }],
+  }
+}
 
 describe('mergeDayEntries', () => {
   it('keeps primary-only and secondary-only days; secondary days get the carried mark', () => {
@@ -281,6 +365,94 @@ describe('never-lose invariant: invalidations with vanished sources', () => {
     const out = await ensureCacheHydrated(noSessions, () => [], 'cfg-A')
     expect(out.days[0]).toMatchObject({ date: d.date, cost: d.cost, carried: true })
     expect(out.tzKey).toBe(currentTzKey())
+  })
+
+  it('timezone change subtracts only the re-bucketed turn and preserves unrelated history', async () => {
+    const previousTz = process.env['TZ']
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-28T12:00:00.000Z'))
+    try {
+      const moved = projectWithSingleTurn({
+        timestamp: '2026-07-10T01:00:00.000Z',
+        // This session started on Jul 9 in both zones; only its turn crosses the
+        // midnight boundary, which isolates the per-turn migration behavior.
+        firstTimestamp: '2026-07-09T20:00:00.000Z',
+        costUSD: 5,
+        provider: 'claude',
+        model: 'Opus 4.7',
+        sessionId: 'moved-turn',
+        hasEdits: true,
+      })
+      const vanishedClaude = projectWithSingleTurn({
+        timestamp: '2026-07-09T18:00:00.000Z',
+        costUSD: 7,
+        provider: 'claude',
+        model: 'Sonnet 4.5',
+        sessionId: 'vanished-claude-source',
+      })
+      const unrelatedCodex = projectWithSingleTurn({
+        timestamp: '2026-07-09T17:00:00.000Z',
+        costUSD: 3,
+        provider: 'codex',
+        model: 'gpt-5.4',
+        sessionId: 'unrelated-codex',
+        project: 'other',
+        category: 'testing',
+      })
+
+      process.env['TZ'] = 'America/New_York'
+      const oldDay = aggregateProjectsIntoDays([moved, vanishedClaude, unrelatedCodex])
+        .find(entry => entry.date === '2026-07-09')!
+      await saveDailyCache({
+        version: DAILY_CACHE_VERSION,
+        savingsConfigHash: 'cfg-A',
+        tzKey: 'America/New_York',
+        lastComputedDate: '2026-07-27',
+        days: [
+          // Exact real-cache loss class from #770: this source-gone day must not
+          // be removed merely because fresh Claude coverage starts later.
+          day('2026-06-18', { claude: slice(399.70, 1_572) }),
+          oldDay,
+        ],
+        complete: true,
+      })
+
+      process.env['TZ'] = 'Europe/Bucharest'
+      const out = await ensureCacheHydrated(
+        async () => [moved],
+        aggregateProjectsIntoDays,
+        'cfg-A',
+      )
+
+      expect(out.days.map(entry => entry.date)).toEqual(['2026-06-18', '2026-07-09', '2026-07-10'])
+      expect(out.days[0]).toMatchObject({ cost: 399.70, calls: 1_572, carried: true })
+
+      const old = out.days[1]!
+      expect(old).toMatchObject({ cost: 10, calls: 2, sessions: 3, carried: true })
+      expect(old.providers['claude']).toMatchObject({ cost: 7, calls: 1, sessions: 2 })
+      expect(old.providers['codex']).toMatchObject({ cost: 3, calls: 1, sessions: 1 })
+      expect(old.models['Opus 4.7']).toBeUndefined()
+      expect(old.models['Sonnet 4.5']!.cost).toBe(7)
+      expect(old.models['gpt-5.4']!.cost).toBe(3)
+      expect(old.categories['coding']).toMatchObject({ turns: 1, cost: 7, editTurns: 0 })
+      expect(old.categories['testing']).toMatchObject({ turns: 1, cost: 3 })
+      expect(old.projects!['p']).toMatchObject({ cost: 7, calls: 1, sessions: 2 })
+      expect(old.projects!['other']).toMatchObject({ cost: 3, calls: 1, sessions: 1 })
+
+      const fresh = out.days[2]!
+      expect(fresh).toMatchObject({ cost: 5, calls: 1, sessions: 0 })
+      expect(fresh.models['Opus 4.7']!.cost).toBe(5)
+      expect(fresh.carried).toBeUndefined()
+
+      // The migrated $5/call exists exactly once; every unrelated value remains.
+      const lifetime = buildPeriodDataFromDays(out.days, 'lifetime')
+      expect(lifetime.cost).toBeCloseTo(414.70, 8)
+      expect(lifetime.calls).toBe(1_575)
+    } finally {
+      if (previousTz === undefined) delete process.env['TZ']
+      else process.env['TZ'] = previousTz
+      vi.useRealTimers()
+    }
   })
 
   it('incomplete-cache retry with an empty re-parse keeps the day', async () => {
