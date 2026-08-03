@@ -1,7 +1,7 @@
 import { homedir } from 'node:os'
 import { CATEGORY_LABELS, type ProjectSummary, type TaskCategory, type DateRange } from './types.js'
 import { type PeriodData, type ProviderCost, type BreakdownArrays, type MenubarPayload, type ClaudeConfigSelector, buildMenubarPayload } from './menubar-json.js'
-import { parseAllSessions, filterProjectsByName, filterProjectsByDays, filterProjectsByClaudeConfigSource, isSessionHydrationComplete } from './parser.js'
+import { parseAllSessions, filterProjectsByName, filterProjectsByDays, filterProjectsByClaudeConfigSource, isSessionHydrationComplete, consumeServedDegraded } from './parser.js'
 import { findUnpricedModels, getLocalModelSavingsConfigHash, getPriceOverridesConfigHash, getShortModelName, isExpectedFreeModel } from './models.js'
 import { getAllProviders, safeDiscoverSessions } from './providers/index.js'
 import { claude, getClaudeConfigDirs, getDesktopSessionsDirs } from './providers/claude.js'
@@ -518,6 +518,9 @@ export async function buildDurablePeriod(periodInfo: PeriodInfo, opts: Aggregate
  * false, the expensive scanAndDetect pass is skipped (retryTax/routingWaste still computed).
  */
 export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: AggregateOpts = {}): Promise<MenubarPayload> {
+  // Each payload build starts clean: a previous build that died mid-flight must
+  // not poison this one with a leaked degraded flag.
+  consumeServedDegraded()
   const pf = opts.provider ?? 'all'
   const daysSelection = opts.daysSelection ?? null
   const fp = (p: ProjectSummary[]) => filterProjectsByName(p, opts.project ?? [], opts.exclude ?? [])

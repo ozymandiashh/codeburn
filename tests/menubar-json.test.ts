@@ -1,7 +1,25 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises'
+import { tmpdir } from 'os'
+import { join } from 'path'
 
 import { buildMenubarPayload, type CombinedUsage, type PeriodData, type ProviderCost } from '../src/menubar-json.js'
 import type { OptimizeResult } from '../src/optimize.js'
+import { clearSessionCache, consumeServedDegraded, parseAllSessions } from '../src/parser.js'
+import { sessionCachePath } from '../src/session-cache.js'
+import { buildMenubarPayloadForRange } from '../src/usage-aggregator.js'
+
+// Drive a real degraded parse (cache-refresh lock unavailable) so the payload's
+// stale/dataAsOf contract can be asserted against the sticky build-scoped flag.
+const { acquireMock } = vi.hoisted(() => ({ acquireMock: vi.fn() }))
+
+vi.mock('../src/cache-refresh-lock.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/cache-refresh-lock.js')>('../src/cache-refresh-lock.js')
+  return {
+    ...actual,
+    acquireCacheRefreshLock: acquireMock,
+  }
+})
 
 function emptyPeriod(label: string): PeriodData {
   return {
@@ -412,5 +430,129 @@ describe('buildMenubarPayload', () => {
         { id: 'claude-config:b', label: 'claude-personal', path: '/tmp/claude-personal' },
       ],
     })
+  })
+})
+
+describe('data-freshness marker (#771)', () => {
+  let root: string
+  let projectDir: string
+
+  const acquiredPayload = {
+    outcome: 'acquired' as const,
+    handle: { token: 'test', release: async () => {}, verifyStillOwner: async () => true },
+  }
+
+  beforeEach(async () => {
+    acquireMock.mockReset()
+    clearSessionCache()
+    root = await mkdtemp(join(tmpdir(), 'cb-menubar-freshness-'))
+    const home = join(root, 'home')
+    projectDir = join(home, 'projects', 'proj')
+    await mkdir(projectDir, { recursive: true })
+    process.env['HOME'] = home
+    process.env['CLAUDE_CONFIG_DIR'] = home
+    process.env['CODEBURN_CACHE_DIR'] = join(root, 'cache')
+    process.env['CODEBURN_DESKTOP_SESSIONS_DIR'] = join(home, 'desktop-sessions')
+  })
+
+  afterEach(async () => {
+    clearSessionCache()
+    delete process.env['HOME']
+    delete process.env['CLAUDE_CONFIG_DIR']
+    delete process.env['CODEBURN_CACHE_DIR']
+    delete process.env['CODEBURN_DESKTOP_SESSIONS_DIR']
+    await rm(root, { recursive: true, force: true })
+  })
+
+  async function writeSession(id: string, ts: string, value: number): Promise<void> {
+    await writeFile(join(projectDir, `${id}.jsonl`), JSON.stringify({
+      type: 'assistant',
+      sessionId: id,
+      timestamp: ts,
+      cwd: '/tmp/proj',
+      message: {
+        id: `msg-${id}`, type: 'message', role: 'assistant', model: 'claude-sonnet-4-5',
+        content: [], usage: { input_tokens: 100, output_tokens: value },
+      },
+    }) + '\n')
+  }
+
+  it('omits stale and dataAsOf on a clean build', () => {
+    const payload = buildMenubarPayload(emptyPeriod('Today'), [], null)
+    expect(payload).not.toHaveProperty('stale')
+    expect(payload).not.toHaveProperty('dataAsOf')
+  })
+
+  it('carries stale:true and dataAsOf when a parse in the build served the snapshot read-only', async () => {
+    // Warm complete cache, then a new file under a lock that cannot be
+    // acquired: the run serves the prior snapshot read-only, so the payload
+    // must surface that instead of reporting the build wall-clock as fresh.
+    await writeSession('sess-1', '2026-05-15T10:00:00Z', 50)
+    await parseAllSessions(undefined, 'claude')
+
+    await writeSession('sess-2', '2026-05-15T11:00:00Z', 5000)
+    clearSessionCache()
+    acquireMock.mockResolvedValueOnce({ outcome: 'timed-out' })
+    acquireMock.mockResolvedValue({
+      outcome: 'acquired',
+      handle: { token: 'test', release: async () => {}, verifyStillOwner: async () => true },
+    })
+    await parseAllSessions(undefined, 'claude')
+
+    const payload = buildMenubarPayload(emptyPeriod('Today'), [], null)
+    expect(payload.stale).toBe(true)
+    expect(payload.dataAsOf).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+  })
+
+  it('dataAsOf is the OLD snapshot served, not a later cache write in the same build', async () => {
+    // Warm, complete cache: this stamps savedAt on the served snapshot.
+    await writeSession('sess-1', '2026-05-15T10:00:00Z', 50)
+    await parseAllSessions(undefined, 'claude')
+    const oldSavedAt = (JSON.parse(await readFile(sessionCachePath(), 'utf8')) as { savedAt?: unknown }).savedAt
+    expect(typeof oldSavedAt).toBe('number')
+
+    // Degraded serve of THAT old snapshot: the new file has no cache entry.
+    await writeSession('sess-2', '2026-05-15T11:00:00Z', 5000)
+    clearSessionCache()
+    acquireMock.mockResolvedValueOnce({ outcome: 'timed-out' })
+    acquireMock.mockResolvedValue(acquiredPayload)
+    await parseAllSessions(undefined, 'claude')
+
+    // Same build, clean run: acquires the lock, parses sess-2, and WRITES the
+    // cache, advancing its mtime/savedAt past the served snapshot.
+    clearSessionCache()
+    await parseAllSessions(undefined, 'claude')
+
+    const payload = buildMenubarPayload(emptyPeriod('Today'), [], null)
+    expect(payload.stale).toBe(true)
+    // The as-of is captured at the serve site (the OLD snapshot), so the newer
+    // cache write must not move dataAsOf forward.
+    expect(payload.dataAsOf).toBe(new Date(oldSavedAt as number).toISOString())
+  })
+
+  it('a build that dies mid-flight cannot poison the next build', async () => {
+    // Warm, complete cache.
+    await writeSession('sess-1', '2026-05-15T10:00:00Z', 50)
+    await parseAllSessions(undefined, 'claude')
+
+    // Aborted build: a degraded serve sets the flag, but buildMenubarPayload is
+    // never reached (scanAndDetect / buildGranularHistory threw), so the flag
+    // leaks: consumeServedDegraded is deliberately NOT called.
+    await writeSession('sess-2', '2026-05-15T11:00:00Z', 5000)
+    clearSessionCache()
+    acquireMock.mockResolvedValueOnce({ outcome: 'timed-out' })
+    acquireMock.mockResolvedValue(acquiredPayload)
+    await parseAllSessions(undefined, 'claude')
+
+    // Fresh build: the entry-clear at the top of the payload build drops the
+    // leaked flag before any data collection, and the clean parses below do not
+    // re-raise it.
+    clearSessionCache()
+    const payload = await buildMenubarPayloadForRange(
+      { range: { start: new Date('2026-05-15T00:00:00Z'), end: new Date('2026-05-15T23:59:59.999Z') }, label: 'p' },
+      { provider: 'claude', optimize: false, timeline: false },
+    )
+    expect(payload).not.toHaveProperty('stale')
+    expect(consumeServedDegraded().degraded).toBe(false)
   })
 })

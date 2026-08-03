@@ -1,5 +1,5 @@
 import { readFile, stat, open, rename, unlink, readdir, mkdir } from 'fs/promises'
-import { existsSync, readFileSync, unlinkSync } from 'fs'
+import { existsSync, readFileSync, statSync, unlinkSync } from 'fs'
 import { createHash, randomBytes } from 'crypto'
 import { join } from 'path'
 import { homedir } from 'os'
@@ -140,6 +140,10 @@ export type SessionCache = {
    *  can freeze a partial daily history. Absent on caches written before this
    *  field existed → read as incomplete (one self-healing re-hydration). */
   complete?: boolean
+  /** Epoch ms when saveCache last wrote this envelope. Absent on caches written
+   *  before the field existed; read those as the cache file's mtime (issue #771
+   *  data-freshness marker). */
+  savedAt?: number
 }
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -251,6 +255,25 @@ function getLegacyCachePath(): string {
 /** Absolute path of the active (version-suffixed) session cache file. */
 export function sessionCachePath(): string {
   return getCachePath()
+}
+
+/** Epoch ms the session cache snapshot was last written: the envelope's savedAt
+ *  when present, else the cache file's mtime (caches written before savedAt
+ *  existed). undefined when neither is available. */
+export function cacheSavedAtMs(cache: SessionCache): number | undefined {
+  if (typeof cache.savedAt === 'number' && Number.isFinite(cache.savedAt) && cache.savedAt > 0) return cache.savedAt
+  return sessionCacheFileMtimeMs()
+}
+
+/** Epoch ms of the on-disk session cache file's mtime, or undefined when the
+ *  file does not exist. Synchronous so the menubar payload (which has no handle
+ *  to the loaded cache object) can stamp dataAsOf. */
+export function sessionCacheFileMtimeMs(): number | undefined {
+  try {
+    return statSync(getCachePath()).mtimeMs
+  } catch {
+    return undefined
+  }
 }
 
 // ── Env Fingerprint ────────────────────────────────────────────────────
@@ -538,6 +561,11 @@ export async function saveCache(cache: SessionCache, verifyStillOwner?: () => Pr
   const finalPath = getCachePath()
   const tempPath = `${finalPath}.${randomBytes(8).toString('hex')}.tmp`
   delete (cache as { _dirty?: boolean })._dirty
+  // Only finalized snapshots carry savedAt: a degraded (read-only) serve always
+  // serves a COMPLETE cache, so the marker is exactly the snapshot's as-of, and
+  // the partial (complete:false) intermediates of a cold hydration never need
+  // one. Pre-existing caches without the field stay valid and read as mtime.
+  if (cache.complete === true) cache.savedAt = Date.now()
   const payload = JSON.stringify(cache)
 
   const handle = await open(tempPath, 'w', 0o600)

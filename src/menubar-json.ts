@@ -87,6 +87,8 @@ import type { GranularHistory } from './granular-history.js'
 import { getShortModelName } from './models.js'
 import type { ReworkedFile } from './workflow-insights.js'
 import type { PrRow, BranchRow } from './sessions-report.js'
+import { consumeServedDegraded } from './parser.js'
+import { sessionCacheFileMtimeMs } from './session-cache.js'
 
 const TOP_ACTIVITIES_LIMIT = 20
 const TOP_MODELS_LIMIT = 20
@@ -178,6 +180,15 @@ export type ClaudeConfigSelector = {
 
 export type MenubarPayload = {
   generated: string
+  /// Epoch-ms as-of of the snapshot actually served when the build degraded to
+  /// a read-only stale serve (issue #771): the session cache's savedAt, or its
+  /// file mtime. ISO string. Omitted on fresh builds.
+  dataAsOf?: string
+  /// True when any parse within this build served the prior on-disk snapshot
+  /// read-only (the cache-refresh lock was unavailable) rather than parsing
+  /// fresh data. Omitted on fresh builds, so consumers can trust `generated`
+  /// as the data's freshness only when this is absent.
+  stale?: boolean
   current: {
     label: string
     cost: number
@@ -556,6 +567,19 @@ export function buildMenubarPayload(
   }
   if (claudeConfigs && claudeConfigs.options.length > 1) {
     payload.claudeConfigs = claudeConfigs
+  }
+  // Data-freshness marker (#771): a build that had to serve the prior on-disk
+  // snapshot read-only (cache-refresh lock unavailable) must say so, otherwise
+  // consumers read the build wall-clock (`generated`) as the data's freshness.
+  // Add-only, matching the pullRequests/byBranch precedent: a clean build omits
+  // both fields entirely. The as-of is captured at the serve site (parser) so it
+  // is the snapshot actually served, not the cache file's current mtime; the
+  // file-mtime fallback only covers the rare case no serve site captured one.
+  const servedDegraded = consumeServedDegraded()
+  if (servedDegraded.degraded) {
+    payload.stale = true
+    const asOfMs = servedDegraded.asOfMs ?? sessionCacheFileMtimeMs()
+    if (asOfMs !== undefined) payload.dataAsOf = new Date(asOfMs).toISOString()
   }
   return payload
 }

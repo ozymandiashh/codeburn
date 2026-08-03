@@ -17,6 +17,7 @@ import {
   type ProviderSection,
   type SessionCache,
   beginColdHydration,
+  cacheSavedAtMs,
   cleanupOrphanedTempFiles,
   computeEnvFingerprint,
   DURABLE_PROVIDER_NAMES,
@@ -1937,7 +1938,11 @@ async function scanProjectDirs(
       const cached = section.files[filePath]
       const action = reconcileFile(fp, cached)
       if (cached && (readOnly || action.action === 'unchanged')) {
-        if (readOnly && action.action !== 'unchanged') readOnlyServedStale = true
+        if (readOnly && action.action !== 'unchanged') {
+          readOnlyServedStale = true
+          servedDegraded = true
+          recordServedAsOf(diskCache)
+        }
         unchangedFiles.push({ filePath, dirName, source, cached: section.files[filePath]! })
       } else if (!readOnly) {
         if (action.action === 'appended') {
@@ -1953,6 +1958,8 @@ async function scanProjectDirs(
         // Read-only with no cache entry at all: this file is dropped from what
         // we serve, so the snapshot under-reports whatever days it covers.
         readOnlyServedStale = true
+        servedDegraded = true
+        recordServedAsOf(diskCache)
       }
     }
     dirsDone++
@@ -2899,13 +2906,19 @@ async function parseProviderSources(
     // re-read a file that already threw and hasn't changed. It re-parses only
     // when the file changes (then `reconcileFile` reports non-'unchanged').
     if (cached && (readOnly || (action.action === 'unchanged' && (cached.failed || !cachedFileNeedsProviderReparse(providerName, source.path, cached))))) {
-      if (readOnly && action.action !== 'unchanged') readOnlyServedStale = true
+      if (readOnly && action.action !== 'unchanged') {
+        readOnlyServedStale = true
+        servedDegraded = true
+        recordServedAsOf(diskCache)
+      }
       unchangedSources.push({ source, cached })
     } else if (!readOnly) {
       changedSources.push({ source, fp })
     } else {
       // Read-only with no cache entry at all — see scanProjectDirs.
       readOnlyServedStale = true
+      servedDegraded = true
+      recordServedAsOf(diskCache)
     }
   }
 
@@ -3190,7 +3203,10 @@ async function parseProviderSources(
 
 const CACHE_TTL_MS = 180_000
 const MAX_CACHE_ENTRIES = 10
-const sessionCache = new Map<string, { data: ProjectSummary[]; ts: number }>()
+// Memo entry carries the degraded state of the run that produced it (issue
+// #771): a memo hit returns the SAME stale data without re-entering runParse,
+// so the entry must remember it was degraded and re-assert the build flag.
+const sessionCache = new Map<string, { data: ProjectSummary[]; ts: number; degraded?: boolean; asOfMs?: number }>()
 
 function cacheKey(dateRange?: DateRange, providerFilter?: string): string {
   const s = dateRange ? `${dateRange.start.getTime()}:${dateRange.end.getTime()}` : 'none'
@@ -3207,7 +3223,7 @@ export function clearSessionCache(): void {
   sessionCache.clear()
 }
 
-function cachePut(key: string, data: ProjectSummary[]) {
+function cachePut(key: string, data: ProjectSummary[], runInfo?: { degraded: boolean; asOfMs?: number }) {
   const now = Date.now()
   for (const [k, v] of sessionCache) {
     if (now - v.ts > CACHE_TTL_MS) sessionCache.delete(k)
@@ -3216,7 +3232,16 @@ function cachePut(key: string, data: ProjectSummary[]) {
     const oldest = [...sessionCache.entries()].sort((a, b) => a[1].ts - b[1].ts)[0]
     if (oldest) sessionCache.delete(oldest[0])
   }
-  sessionCache.set(key, { data, ts: now })
+  // A degraded run's result IS the stale snapshot: carry that with the memo
+  // entry so a later TTL-window hit re-asserts the flag instead of looking
+  // fresh. A clean run writes a plain entry (no degraded fields).
+  sessionCache.set(key, {
+    data,
+    ts: now,
+    ...(runInfo?.degraded
+      ? { degraded: true, ...(runInfo.asOfMs !== undefined ? { asOfMs: runInfo.asOfMs } : {}) }
+      : {}),
+  })
 }
 
 export function filterProjectsByName(
@@ -3627,10 +3652,59 @@ export function isSessionHydrationComplete(): boolean {
 // chart (gapStart = lastComputedDate + 1 never looks back at them).
 let readOnlyServedStale = false
 
+// Build-scoped sticky accumulator (issue #771): OR-ed wherever a read-only run
+// had to serve stale/partial data, but NOT reset by a later clean runParse
+// within the same payload build. A degraded range followed by a clean range
+// must still report stale, and the CACHE_TTL_MS memo may skip re-entering
+// runParse entirely for later calls, so the flag has to survive both. Reset
+// only by consumeServedDegraded(), which the menubar payload calls once per
+// build.
+let servedDegraded = false
+
+// Oldest snapshot as-of served degraded during the current payload build
+// (MIN semantics: the worst case is the honest one). Captured at the serve
+// site from the cache object actually being served, so a later cache write
+// that advances the file mtime cannot move dataAsOf past the served snapshot.
+let servedAsOfMs: number | undefined
+
+// Per-run counterpart of servedAsOfMs, so a memo entry records the as-of of
+// the exact snapshot THIS run served (not a stale serve from an earlier run in
+// the same build, which the sticky flag intentionally ignores).
+let runAsOfMs: number | undefined
+
+// Record the served snapshot's as-of (savedAt preferred, file-mtime fallback)
+// at the moment a read-only serve degrades. MIN-merged into both the
+// build-scoped and per-run accumulators.
+function recordServedAsOf(cache: SessionCache): void {
+  const asOf = cacheSavedAtMs(cache)
+  if (asOf === undefined) return
+  if (servedAsOfMs === undefined || asOf < servedAsOfMs) servedAsOfMs = asOf
+  if (runAsOfMs === undefined || asOf < runAsOfMs) runAsOfMs = asOf
+}
+
+export function consumeServedDegraded(): { degraded: boolean; asOfMs?: number } {
+  const value = servedDegraded
+  const asOf = servedAsOfMs
+  servedDegraded = false
+  servedAsOfMs = undefined
+  return { degraded: value, ...(asOf !== undefined ? { asOfMs: asOf } : {}) }
+}
+
 export async function parseAllSessions(dateRange?: DateRange, providerFilter?: string): Promise<ProjectSummary[]> {
   const key = cacheKey(dateRange, providerFilter)
   const cached = sessionCache.get(key)
-  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.data
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    // A memoized degraded run must re-assert the flag: the memo hit returns the
+    // same stale data without entering runParse, so nothing else would. MIN-merge
+    // the entry's as-of into the build-scoped accumulator.
+    if (cached.degraded) {
+      servedDegraded = true
+      if (cached.asOfMs !== undefined) {
+        if (servedAsOfMs === undefined || cached.asOfMs < servedAsOfMs) servedAsOfMs = cached.asOfMs
+      }
+    }
+    return cached.data
+  }
 
   let diskCache = await loadCache()
   await cleanupOrphanedTempFiles()
@@ -3697,6 +3771,7 @@ async function runParse(
 ): Promise<ProjectSummary[]> {
   const { isCold = false, readOnly = false, refreshLock } = options
   readOnlyServedStale = false
+  runAsOfMs = undefined
   const seenMsgIds = new Set<string>()
   const seenKeys = new Set<string>()
   const allSources = await discoverAllSessions(providerFilter)
@@ -3855,6 +3930,9 @@ async function runParse(
 
   const result = Array.from(mergedMap.values()).sort((a, b) => b.totalCostUSD - a.totalCostUSD)
   correlateCrossProviderPrSessions(result)
-  cachePut(key, result)
+  // Carry this run's degraded state into the memo entry: readOnlyServedStale is
+  // this-run only (reset at entry), runAsOfMs is the snapshot as-of this run
+  // served. A memo hit on this entry then re-asserts the build flag.
+  cachePut(key, result, { degraded: readOnlyServedStale, asOfMs: runAsOfMs })
   return result
 }

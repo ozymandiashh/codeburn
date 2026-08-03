@@ -596,8 +596,13 @@ class CodeBurnIndicator extends PanelMenu.Button {
     this._renderFindings(payload?.optimize ?? {});
     this._updateBudget();
 
-    const updated = payload?.generated ? formatTime(new Date(payload.generated)) : '';
-    this._updatedLabel.set_text(updated ? `Updated ${updated}` : '');
+    if (payload?.stale) {
+      const asOf = payload?.dataAsOf ? formatTime(new Date(payload.dataAsOf)) : '';
+      this._updatedLabel.set_text(asOf ? `Data as of ${asOf}` : '');
+    } else {
+      const updated = payload?.generated ? formatTime(new Date(payload.generated)) : '';
+      this._updatedLabel.set_text(updated ? `Updated ${updated}` : '');
+    }
   }
 
   _renderChart(daily) {
