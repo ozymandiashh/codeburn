@@ -1,7 +1,7 @@
 import { homedir } from 'node:os'
-import { CATEGORY_LABELS, type ProjectSummary, type TaskCategory, type DateRange } from './types.js'
+import { CATEGORY_LABELS, type ProjectSummary, type TaskCategory, type DateRange, type DataFreshness } from './types.js'
 import { type PeriodData, type ProviderCost, type BreakdownArrays, type MenubarPayload, type ClaudeConfigSelector, buildMenubarPayload } from './menubar-json.js'
-import { parseAllSessions, filterProjectsByName, filterProjectsByDays, filterProjectsByClaudeConfigSource, isSessionHydrationComplete } from './parser.js'
+import { parseAllSessions, parseAllSessionsWithFreshness, filterProjectsByName, filterProjectsByDays, filterProjectsByClaudeConfigSource, isSessionHydrationComplete } from './parser.js'
 import { findUnpricedModels, getLocalModelSavingsConfigHash, getPriceOverridesConfigHash, getShortModelName, isExpectedFreeModel } from './models.js'
 import { getAllProviders, safeDiscoverSessions } from './providers/index.js'
 import { claude, getClaudeConfigDirs, getDesktopSessionsDirs } from './providers/claude.js'
@@ -86,10 +86,12 @@ export function getDailyCacheConfigHash(): string {
   return `localModelSavings=${savingsHash}\u0002priceOverrides=${overridesHash}`
 }
 
-async function hydrateCache(): Promise<DailyCache> {
+type ParseSessions = (range?: DateRange, provider?: string) => Promise<ProjectSummary[]>
+
+async function hydrateCache(parseSessions: ParseSessions = parseAllSessions): Promise<DailyCache> {
   try {
     return await ensureCacheHydrated(
-      (range) => parseAllSessions(range, 'all'),
+      (range) => parseSessions(range, 'all'),
       aggregateProjectsIntoDays,
       getDailyCacheConfigHash(),
       // Never finalize the daily history off a partial (interrupted) session
@@ -278,7 +280,11 @@ export type DurablePeriod = {
   scanRange: DateRange
 }
 
-export async function buildDurablePeriod(periodInfo: PeriodInfo, opts: AggregateOpts = {}): Promise<DurablePeriod> {
+export async function buildDurablePeriod(
+  periodInfo: PeriodInfo,
+  opts: AggregateOpts = {},
+  parseSessions: ParseSessions = parseAllSessions,
+): Promise<DurablePeriod> {
   const pf = opts.provider ?? 'all'
   const daysSelection = opts.daysSelection ?? null
   const fp = (p: ProjectSummary[]) => filterProjectsByName(p, opts.project ?? [], opts.exclude ?? [])
@@ -291,7 +297,7 @@ export async function buildDurablePeriod(periodInfo: PeriodInfo, opts: Aggregate
   const rangeEndStr = toDateString(periodInfo.range.end)
   const isTodayOnly = rangeStartStr === todayStr && rangeEndStr === todayStr
 
-  const cache = await hydrateCache()
+  const cache = await hydrateCache(parseSessions)
 
   // Today's live data always comes from an all-provider parse so the union (and
   // any per-provider slice of it) sees every provider's today. `todayAllDays` is
@@ -302,25 +308,25 @@ export async function buildDurablePeriod(periodInfo: PeriodInfo, opts: Aggregate
   let scanRange: DateRange
   if (pf === 'all') {
     if (isTodayOnly) {
-      const raw = fp(await parseAllSessions(todayRange, 'all'))
+      const raw = fp(await parseSessions(todayRange, 'all'))
       liveProjects = raw
       scanRange = todayRange
       todayAllDays = aggregateProjectsIntoDays(raw).filter(d => d.date === todayStr)
     } else {
-      const raw = fp(await parseAllSessions(periodInfo.range, 'all'))
+      const raw = fp(await parseSessions(periodInfo.range, 'all'))
       liveProjects = daysSelection ? filterProjectsByDays(raw, daysSelection.days) : raw
       scanRange = periodInfo.range
       // A period that reaches today contains today's turns already, so derive the
       // today slice from the same parse instead of scanning today again.
       todayAllDays = rangeEndStr >= todayStr
         ? aggregateProjectsIntoDays(raw).filter(d => d.date === todayStr)
-        : aggregateProjectsIntoDays(fp(await parseAllSessions(todayRange, 'all'))).filter(d => d.date === todayStr)
+        : aggregateProjectsIntoDays(fp(await parseSessions(todayRange, 'all'))).filter(d => d.date === todayStr)
     }
   } else {
     // Provider-filtered: today's all-provider parse feeds the union (sliced
     // below); the provider-scoped parse feeds the detail/enrichment fields.
-    todayAllDays = aggregateProjectsIntoDays(fp(await parseAllSessions(todayRange, 'all'))).filter(d => d.date === todayStr)
-    const rawProv = fp(await parseAllSessions(isTodayOnly ? todayRange : periodInfo.range, pf))
+    todayAllDays = aggregateProjectsIntoDays(fp(await parseSessions(todayRange, 'all'))).filter(d => d.date === todayStr)
+    const rawProv = fp(await parseSessions(isTodayOnly ? todayRange : periodInfo.range, pf))
     liveProjects = daysSelection && !isTodayOnly ? filterProjectsByDays(rawProv, daysSelection.days) : rawProv
     scanRange = isTodayOnly ? todayRange : periodInfo.range
   }
@@ -377,10 +383,24 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
 
   let todayAllProjects: ProjectSummary[] | null = null
   let todayAllDays: ReturnType<typeof aggregateProjectsIntoDays> | null = null
+  let dataFreshness: DataFreshness | undefined
+
+  const parseSessions: ParseSessions = async (range, provider) => {
+    const parsed = await parseAllSessionsWithFreshness(range, provider)
+    dataFreshness = dataFreshness
+      ? {
+          asOf: parsed.freshness.asOf.localeCompare(dataFreshness.asOf) < 0
+            ? parsed.freshness.asOf
+            : dataFreshness.asOf,
+          stale: dataFreshness.stale || parsed.freshness.stale,
+        }
+      : parsed.freshness
+    return parsed.projects
+  }
 
   const getTodayAllProjects = async (): Promise<ProjectSummary[]> => {
     if (!todayAllProjects) {
-      todayAllProjects = fp(await parseAllSessions(todayRange, 'all'))
+      todayAllProjects = fp(await parseSessions(todayRange, 'all'))
     }
     return todayAllProjects
   }
@@ -412,7 +432,7 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
     // A config source scopes Claude usage only, so scan just Claude (main.ts
     // rejects a contradictory non-Claude --provider). This also avoids parsing
     // every other provider's corpus on each scoped refresh.
-    const rawProjects = fp(await parseAllSessions(periodInfo.range, 'claude'))
+    const rawProjects = fp(await parseSessions(periodInfo.range, 'claude'))
     const fullProjects = daysSelection ? filterProjectsByDays(rawProjects, daysSelection.days) : rawProjects
     claudeConfigs = await claudeConfigSelector(fullProjects, requestedClaudeConfigSourceId)
     const selectedSourceId = claudeConfigs?.selectedId ?? null
@@ -438,7 +458,7 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
       project: opts.project,
       exclude: opts.exclude,
       daysSelection,
-    })
+    }, parseSessions)
     currentData = durable.data
     scanProjects = durable.liveProjects
     scanRange = durable.scanRange
@@ -514,7 +534,7 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
       end: now,
     }
     const historyProjects = filterProjectsByClaudeConfigSource(
-      fp(await parseAllSessions(historyRange, 'claude')),
+      fp(await parseSessions(historyRange, 'claude')),
       claudeConfigs.selectedId,
     )
     dailyHistory = dailyEntriesToHistory(aggregateProjectsIntoDays(historyProjects))
@@ -770,5 +790,5 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
   const optimize = opts.optimize === false ? null : await scanAndDetect(scanProjects, scanRange)
   const granularRange = opts.daysSelection?.range ?? scanRange
   const granularHistory = opts.timeline === false ? undefined : buildGranularHistory(scanProjects, granularRange)
-  return buildMenubarPayload(currentData, providers, optimize, dailyHistory, retryTax, routingWaste, breakdowns, claudeConfigs, granularHistory)
+  return buildMenubarPayload(currentData, providers, optimize, dailyHistory, retryTax, routingWaste, breakdowns, claudeConfigs, granularHistory, dataFreshness)
 }

@@ -313,6 +313,14 @@ export type DateRange = {
   end: Date
 }
 
+/** Provenance for data returned by a session parse. `asOf` identifies the
+ * snapshot behind the numbers; `stale` is true only when the warm-refresh gate
+ * deliberately served a prior known-good snapshot. */
+export type DataFreshness = {
+  asOf: string
+  stale: boolean
+}
+
 export const CATEGORY_LABELS: Record<TaskCategory, string> = {
   coding: 'Coding',
   debugging: 'Debugging',

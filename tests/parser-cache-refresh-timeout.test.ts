@@ -3,11 +3,13 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
+const refresh = vi.hoisted(() => ({ outcome: 'timed-out' as 'timed-out' | 'completed-by-other' }))
+
 vi.mock('../src/cache-refresh-lock.js', () => ({
-  acquireCacheRefreshLock: async () => ({ outcome: 'timed-out' as const }),
+  acquireCacheRefreshLock: async () => ({ outcome: refresh.outcome }),
 }))
 
-import { clearSessionCache, parseAllSessions } from '../src/parser.js'
+import { clearSessionCache, parseAllSessions, parseAllSessionsWithFreshness } from '../src/parser.js'
 import { sessionCachePath } from '../src/session-cache.js'
 
 let root: string
@@ -32,6 +34,7 @@ async function writeSession(value: number): Promise<void> {
 }
 
 beforeEach(async () => {
+  refresh.outcome = 'timed-out'
   clearSessionCache()
   root = await mkdtemp(join(tmpdir(), 'cb-refresh-timeout-'))
   const home = join(root, 'home')
@@ -51,12 +54,28 @@ afterEach(async () => {
 describe('parseAllSessions warm refresh timeout', () => {
   it('serves the prior complete snapshot and leaves the holder cache untouched', async () => {
     await writeSession(50)
-    expect(output(await parseAllSessions(undefined, 'claude'))).toBe(50)
+    const fresh = await parseAllSessionsWithFreshness(undefined, 'claude')
+    expect(output(fresh.projects)).toBe(50)
+    expect(fresh.freshness).toEqual({ asOf: expect.any(String), stale: false })
     const before = await readFile(sessionCachePath(), 'utf-8')
 
     await writeSession(5000)
     clearSessionCache()
-    expect(output(await parseAllSessions(undefined, 'claude'))).toBe(50)
+    const stale = await parseAllSessionsWithFreshness(undefined, 'claude')
+    expect(output(stale.projects)).toBe(50)
+    expect(stale.freshness).toEqual({ asOf: fresh.freshness.asOf, stale: true })
     expect(await readFile(sessionCachePath(), 'utf-8')).toBe(before)
-  })
+  }, 15_000)
+
+  it('keeps a snapshot completed by the other lock holder fresh', async () => {
+    await writeSession(50)
+    const initial = await parseAllSessionsWithFreshness(undefined, 'claude')
+
+    refresh.outcome = 'completed-by-other'
+    clearSessionCache()
+    const readOnly = await parseAllSessionsWithFreshness(undefined, 'claude')
+
+    expect(output(readOnly.projects)).toBe(50)
+    expect(readOnly.freshness).toEqual({ asOf: initial.freshness.asOf, stale: false })
+  }, 15_000)
 })

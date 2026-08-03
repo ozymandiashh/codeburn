@@ -63,6 +63,7 @@ export type Current = {
 
 export type Payload = {
   generated: string
+  dataFreshness?: { asOf: string; stale: boolean }
   current: Current
   history: { daily: DailyEntry[]; timeline?: GranularHistory }
 }
@@ -117,6 +118,7 @@ function normalizePayload(p?: Payload): Payload | undefined {
   } : undefined
   return {
     generated: p.generated,
+    ...(p.dataFreshness ? { dataFreshness: p.dataFreshness } : {}),
     current: {
       label: c.label ?? '',
       cost: c.cost ?? 0,

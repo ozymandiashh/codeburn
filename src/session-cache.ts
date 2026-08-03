@@ -128,6 +128,10 @@ export type ProviderSection = {
 export type SessionCache = {
   version: number
   providers: Record<string, ProviderSection>
+  /** Publication time of the last complete snapshot. Optional so caches from
+   *  older builds remain valid; their file mtime supplies the first fallback
+   *  as-of value until the next successful publication. */
+  refreshedAt?: string
   /** True only once a full scan has run to completion. The throttled partial
    *  saves during a cold hydration persist `false`; the single end-of-parse save
    *  flips it `true`. A cache that is present-but-incomplete (an interrupted cold
@@ -401,7 +405,8 @@ function validateCache(raw: unknown): raw is SessionCache {
   const o = raw as Record<string, unknown>
   if (o['version'] !== CACHE_VERSION) return false
   if (!o['providers'] || typeof o['providers'] !== 'object' || Array.isArray(o['providers'])) return false
-  return Object.values(o['providers'] as Record<string, unknown>).every(validateProviderSection)
+  return isOptionalString(o['refreshedAt'])
+    && Object.values(o['providers'] as Record<string, unknown>).every(validateProviderSection)
 }
 
 // Every prior versioned cache file that can still exist on disk from a shipped or

@@ -87,6 +87,7 @@ import type { GranularHistory } from './granular-history.js'
 import { getShortModelName } from './models.js'
 import type { ReworkedFile } from './workflow-insights.js'
 import type { PrRow, BranchRow } from './sessions-report.js'
+import type { DataFreshness } from './types.js'
 
 const TOP_ACTIVITIES_LIMIT = 20
 const TOP_MODELS_LIMIT = 20
@@ -178,6 +179,9 @@ export type ClaudeConfigSelector = {
 
 export type MenubarPayload = {
   generated: string
+  /** Snapshot provenance. Optional at the type boundary so payloads produced by
+   * older CodeBurn peers remain readable; current producers always emit it. */
+  dataFreshness?: DataFreshness
   current: {
     label: string
     cost: number
@@ -507,9 +511,12 @@ export function buildMenubarPayload(
   breakdowns?: BreakdownArrays,
   claudeConfigs?: ClaudeConfigSelector,
   granularHistory?: GranularHistory,
+  dataFreshness?: DataFreshness,
 ): MenubarPayload {
+  const generated = new Date().toISOString()
   const payload: MenubarPayload = {
-    generated: new Date().toISOString(),
+    generated,
+    dataFreshness: dataFreshness ?? { asOf: generated, stale: false },
     current: {
       label: current.label,
       cost: current.cost,

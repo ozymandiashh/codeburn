@@ -25,6 +25,7 @@ import {
   loadCache,
   reconcileFile,
   saveCache,
+  sessionCachePath,
 } from './session-cache.js'
 import { acquireCacheRefreshLock, type RefreshLockHandle } from './cache-refresh-lock.js'
 import type { ParsedProviderCall, SessionSource } from './providers/types.js'
@@ -34,6 +35,7 @@ import type {
   ClassifiedTurn,
   ContentBlock,
   DateRange,
+  DataFreshness,
   JournalEntry,
   ParsedApiCall,
   ParsedTurn,
@@ -3099,7 +3101,12 @@ async function parseProviderSources(
 
 const CACHE_TTL_MS = 180_000
 const MAX_CACHE_ENTRIES = 10
-const sessionCache = new Map<string, { data: ProjectSummary[]; ts: number }>()
+export type SessionParseResult = {
+  projects: ProjectSummary[]
+  freshness: DataFreshness
+}
+
+const sessionCache = new Map<string, { data: ProjectSummary[]; freshness: DataFreshness; ts: number }>()
 
 function cacheKey(dateRange?: DateRange, providerFilter?: string): string {
   const s = dateRange ? `${dateRange.start.getTime()}:${dateRange.end.getTime()}` : 'none'
@@ -3116,7 +3123,7 @@ export function clearSessionCache(): void {
   sessionCache.clear()
 }
 
-function cachePut(key: string, data: ProjectSummary[]) {
+function cachePut(key: string, data: ProjectSummary[], freshness: DataFreshness) {
   const now = Date.now()
   for (const [k, v] of sessionCache) {
     if (now - v.ts > CACHE_TTL_MS) sessionCache.delete(k)
@@ -3125,7 +3132,7 @@ function cachePut(key: string, data: ProjectSummary[]) {
     const oldest = [...sessionCache.entries()].sort((a, b) => a[1].ts - b[1].ts)[0]
     if (oldest) sessionCache.delete(oldest[0])
   }
-  sessionCache.set(key, { data, ts: now })
+  sessionCache.set(key, { data, freshness, ts: now })
 }
 
 export function filterProjectsByName(
@@ -3526,9 +3533,18 @@ export function isSessionHydrationComplete(): boolean {
 }
 
 export async function parseAllSessions(dateRange?: DateRange, providerFilter?: string): Promise<ProjectSummary[]> {
+  return (await parseAllSessionsWithFreshness(dateRange, providerFilter)).projects
+}
+
+/** Parse sessions while retaining whether the warm-refresh gate had to serve a
+ * prior complete snapshot. The legacy array-returning API above stays stable
+ * for callers that do not publish freshness metadata. */
+export async function parseAllSessionsWithFreshness(dateRange?: DateRange, providerFilter?: string): Promise<SessionParseResult> {
   const key = cacheKey(dateRange, providerFilter)
   const cached = sessionCache.get(key)
-  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.data
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    return { projects: cached.data, freshness: cached.freshness }
+  }
 
   let diskCache = await loadCache()
   await cleanupOrphanedTempFiles()
@@ -3558,10 +3574,17 @@ export async function parseAllSessions(dateRange?: DateRange, providerFilter?: s
   const priorSnapshot = diskCache
   const refresh = await acquireCacheRefreshLock()
   if (refresh.outcome === 'timed-out' || refresh.outcome === 'unavailable') {
-    return runParse(key, priorSnapshot, dateRange, providerFilter, { readOnly: true })
+    return runParse(key, priorSnapshot, dateRange, providerFilter, {
+      readOnly: true,
+      freshness: { asOf: await cacheSnapshotAsOf(priorSnapshot), stale: true },
+    })
   }
   if (refresh.outcome === 'completed-by-other') {
-    return runParse(key, await loadCache(), dateRange, providerFilter, { readOnly: true })
+    const published = await loadCache()
+    return runParse(key, published, dateRange, providerFilter, {
+      readOnly: true,
+      freshness: { asOf: await cacheSnapshotAsOf(published), stale: false },
+    })
   }
 
   try {
@@ -3571,7 +3594,13 @@ export async function parseAllSessions(dateRange?: DateRange, providerFilter?: s
     return await runParse(key, diskCache, dateRange, providerFilter, { refreshLock: refresh.handle })
   } catch (err) {
     if (!(err instanceof RefreshFenceLostError) && !(err instanceof RefreshPublicationUnavailableError)) throw err
-    return runParse(key, await loadCache(), dateRange, providerFilter, { readOnly: true })
+    const fallback = await loadCache()
+    return runParse(key, fallback, dateRange, providerFilter, {
+      readOnly: true,
+      // A successor may already have published, but the displaced writer cannot
+      // prove that. Marking the fallback stale is the conservative honest state.
+      freshness: { asOf: await cacheSnapshotAsOf(fallback), stale: true },
+    })
   } finally {
     await refresh.handle.release()
   }
@@ -3584,6 +3613,22 @@ type RunParseOptions = {
   isCold?: boolean
   readOnly?: boolean
   refreshLock?: RefreshLockHandle
+  freshness?: DataFreshness
+}
+
+async function cacheSnapshotAsOf(cache: SessionCache): Promise<string> {
+  if (cache.refreshedAt && Number.isFinite(Date.parse(cache.refreshedAt))) return cache.refreshedAt
+  try {
+    return (await stat(sessionCachePath())).mtime.toISOString()
+  } catch {
+    // A complete cache normally has a canonical file. If it disappeared between
+    // load and stat, the newest cached source fingerprint is the best honest
+    // lower bound available for this one fallback serve.
+    const newestSourceMtime = Object.values(cache.providers)
+      .flatMap(section => Object.values(section.files))
+      .reduce((latest, file) => Math.max(latest, file.fingerprint.mtimeMs), 0)
+    return new Date(newestSourceMtime || Date.now()).toISOString()
+  }
 }
 
 async function runParse(
@@ -3592,7 +3637,7 @@ async function runParse(
   dateRange?: DateRange,
   providerFilter?: string,
   options: RunParseOptions = {},
-): Promise<ProjectSummary[]> {
+): Promise<SessionParseResult> {
   const { isCold = false, readOnly = false, refreshLock } = options
   const seenMsgIds = new Set<string>()
   const seenKeys = new Set<string>()
@@ -3689,7 +3734,9 @@ async function runParse(
   // partial saves keep `complete: false` and the next launch resumes cold.
   const wasComplete = isCacheComplete(diskCache)
   if (!readOnly && !wasComplete) diskCache.complete = true
-  if (!readOnly && ((diskCache as { _dirty?: boolean })._dirty || !wasComplete)) {
+  const completedAt = new Date().toISOString()
+  if (!readOnly && ((diskCache as { _dirty?: boolean })._dirty || !wasComplete || !diskCache.refreshedAt)) {
+    diskCache.refreshedAt = completedAt
     try {
       const published = await saveCache(diskCache, refreshLock?.verifyStillOwner)
       if (!published) throw new RefreshFenceLostError()
@@ -3738,6 +3785,7 @@ async function runParse(
 
   const result = Array.from(mergedMap.values()).sort((a, b) => b.totalCostUSD - a.totalCostUSD)
   correlateCrossProviderPrSessions(result)
-  cachePut(key, result)
-  return result
+  const freshness = options.freshness ?? { asOf: completedAt, stale: false }
+  cachePut(key, result, freshness)
+  return { projects: result, freshness }
 }

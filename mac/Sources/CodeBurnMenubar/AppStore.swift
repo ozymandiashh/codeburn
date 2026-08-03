@@ -232,6 +232,7 @@ final class AppStore {
                 if let combined = combinedPayload?.combined {
                     return MenubarPayload(
                         generated: combinedPayload?.generated ?? localPayload.generated,
+                        dataFreshness: localPayload.dataFreshness,
                         current: localPayload.current,
                         optimize: localPayload.optimize,
                         history: localPayload.history,

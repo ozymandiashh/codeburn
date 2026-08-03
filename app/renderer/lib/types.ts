@@ -118,6 +118,7 @@ export type ClaudeConfigSelector = {
 
 export type MenubarPayload = {
   generated: string
+  dataFreshness?: { asOf: string; stale: boolean }
   current: {
     label: string
     cost: number

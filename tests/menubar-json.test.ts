@@ -35,6 +35,7 @@ describe('buildMenubarPayload', () => {
     const payload = buildMenubarPayload(period, [], null)
 
     expect(payload.generated).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    expect(payload.dataFreshness).toEqual({ asOf: payload.generated, stale: false })
     expect(payload.current.label).toBe('7 Days')
     expect(payload.current.cost).toBe(1248.01)
     expect(payload.current.calls).toBe(11231)
@@ -44,6 +45,18 @@ describe('buildMenubarPayload', () => {
     expect(payload.current.sessions).toBe(97)
     expect(payload.current.inputTokens).toBe(19100)
     expect(payload.current.outputTokens).toBe(675600)
+  })
+
+  it('keeps a stale snapshot time distinct from the render timestamp', () => {
+    const freshness = { asOf: '2026-07-28T01:00:00.000Z', stale: true }
+    const payload = buildMenubarPayload(
+      emptyPeriod('Today'), [], null,
+      undefined, undefined, undefined, undefined, undefined, undefined,
+      freshness,
+    )
+
+    expect(payload.dataFreshness).toEqual(freshness)
+    expect(payload.generated).not.toBe(freshness.asOf)
   })
 
   it('passes the pull-requests payload (models, categories, cap remainder) through verbatim', () => {
