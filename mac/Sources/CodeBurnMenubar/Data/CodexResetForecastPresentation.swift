@@ -54,29 +54,35 @@ enum CodexResetForecastPresentation {
     static func lines(for result: CodexResetForecast.Result) -> [String] {
         guard case let .available(reading) = result else {
             guard case let .unavailable(reason, _) = result else { return [] }
-            return ["Reset forecast: unavailable. \(reason)"]
+            return [L("Reset forecast: unavailable. %@", reason)]
         }
         let since = reading.lastResetSource == .local
-            ? "reset observed on this machine at \(localClock(reading.lastResetAt))"
-            : "last global reset"
-        let headline = "Reset forecast: "
-            + "\(percent(reading.within24h.point)) chance in the next 24h "
-            + "\(range(reading.within24h)), "
-            + "\(percent(reading.within6h.point)) in 6h "
-            + "\(range(reading.within6h)). "
-            + "\(duration(hours: reading.hoursSinceLastReset)) since the \(since); "
-            + "typical wait \(duration(hours: reading.typicalWaitHours)). "
-            + "Working hours in SF: \(reading.workingHoursSF ? "yes" : "no")."
+            ? L("reset observed on this machine at %@", localClock(reading.lastResetAt))
+            : L("last global reset")
+        // Two whole sentences rather than one with a `yes`/`no` hole in it: a
+        // translator needs the sentence, and "yes" on its own is not one.
+        let template = reading.workingHoursSF
+            ? "Reset forecast: %@ chance in the next 24h %@, %@ in 6h %@. %@ since the %@; typical wait %@. Working hours in SF: yes."
+            : "Reset forecast: %@ chance in the next 24h %@, %@ in 6h %@. %@ since the %@; typical wait %@. Working hours in SF: no."
+        let headline = L(
+            template,
+            percent(reading.within24h.point), range(reading.within24h),
+            percent(reading.within6h.point), range(reading.within6h),
+            duration(hours: reading.hoursSinceLastReset), since,
+            duration(hours: reading.typicalWaitHours)
+        )
 
-        var caveats = ["Estimated from \(reading.resetCount) past resets in the public record"]
-        if reading.beyondRecord { caveats.append("the wait is already longer than any in that record") }
+        var caveats = [L("Estimated from %lld past resets in the public record", reading.resetCount)]
+        if reading.beyondRecord { caveats.append(L("the wait is already longer than any in that record")) }
         if reading.stale {
             caveats.append(reading.datasetAgeDays.isFinite
-                ? "the record is \(Int(reading.datasetAgeDays.rounded(.down))) days old and out of date"
-                : "the record carries no date and is out of date")
+                ? L("the record is %lld days old and out of date", Int(reading.datasetAgeDays.rounded(.down)))
+                : L("the record carries no date and is out of date"))
         }
-        caveats.append("\(reading.confidence.rawValue) confidence")
-        return [headline, "\(caveats.joined(separator: "; "))."]
+        // The full stop rides the last clause, so no bare "." key exists for a
+        // translator to guess at.
+        caveats.append(reading.confidence == .moderate ? L("moderate confidence.") : L("low confidence."))
+        return [headline, caveats.joined(separator: "; ")]
     }
 
     /// Which copy of the record the forecast is reading, and when that copy was
@@ -85,10 +91,10 @@ enum CodexResetForecastPresentation {
     /// character for character and cannot drift with a locale.
     static func datasetLine(generatedAt: String?, source: CodexResetHistorySource) -> String {
         let origin = source == .fetched
-            ? "refreshed from this repository on GitHub"
-            : "bundled with this build"
-        guard let generatedAt, !generatedAt.isEmpty else { return "Record: \(origin)." }
-        return "Record: \(generatedAt), \(origin)."
+            ? L("refreshed from this repository on GitHub")
+            : L("bundled with this build")
+        guard let generatedAt, !generatedAt.isEmpty else { return L("Record: %@.", origin) }
+        return L("Record: %@, %@.", generatedAt, origin)
     }
 
     /// The notification. It says what it is before it says a number, and it
@@ -98,11 +104,13 @@ enum CodexResetForecastPresentation {
         let since = reading.lastResetSource == .local
             ? "reset observed on this machine at \(localClock(reading.lastResetAt))"
             : "last global reset"
-        let body = "A statistical estimate from public reset history, not an announcement from OpenAI. "
-            + "\(percent(reading.within6h.point)) chance \(range(reading.within6h)) of a Codex limit reset in the next 6h. "
-            + "\(duration(hours: reading.hoursSinceLastReset)) since the \(since). "
-            + "Nothing has reset yet and nothing was changed."
-        return ("Codex reset forecast", body)
+        // One literal, not a `+` chain: the key is what the catalog is keyed by,
+        // and the localization scanner reads the source rather than running it,
+        // so a concatenated key is only half-visible to the tooling that is
+        // supposed to prove every key is translated.
+        // swiftlint:disable:next line_length
+        let body = L("A statistical estimate from public reset history, not an announcement from OpenAI. %@ chance %@ of a Codex limit reset in the next 6h. %@ since the %@. Nothing has reset yet and nothing was changed.", percent(reading.within6h.point), range(reading.within6h), duration(hours: reading.hoursSinceLastReset), since)
+        return (L("Codex reset forecast"), body)
     }
 }
 

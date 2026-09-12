@@ -19,10 +19,10 @@ enum MenubarSecondRowMetric: String, CaseIterable, Identifiable, Sendable {
     /// Settings picker label.
     var settingsLabel: String {
         switch self {
-        case .quotaRemaining: "Quota remaining"
-        case .todayCost: "Today's cost"
-        case .todayTokens: "Today's tokens"
-        case .activeSessions: "Active sessions"
+        case .quotaRemaining: L("Quota remaining")
+        case .todayCost: L("Today's cost")
+        case .todayTokens: L("Today's tokens")
+        case .activeSessions: L("Active sessions")
         }
     }
 }
@@ -211,10 +211,10 @@ enum MenubarRowFormatter {
         case .todayCost:
             guard let cost = snapshot.todayCost, cost.isFinite else { return nil }
             let converted = cost * snapshot.currencyRate
-            row = String(format: "\(snapshot.currencySymbol)%.2f today", converted)
+            row = L("%@ today", String(format: "\(snapshot.currencySymbol)%.2f", converted))
         case .todayTokens:
             guard let tokens = snapshot.todayTotalTokens else { return nil }
-            row = "\(compactTokens(Double(tokens))) tok today"
+            row = L("%@ tok today", compactTokens(Double(tokens)))
         case .activeSessions:
             guard let count = snapshot.activeSessionCount else { return nil }
             // Live sessions are identity-derived, so the exact phrasing applies.
@@ -238,16 +238,16 @@ enum MenubarRowFormatter {
         guard let quota, quota.percentUsed.isFinite else { return nil }
         let remaining = min(max(1 - quota.percentUsed, 0), 1)
         let percent = Int((remaining * 100).rounded())
-        var figures = "\(percent)% left"
+        var figures = L("%lld%% left", percent)
         if let countdown = resetCountdown(quota.resetsAt, now: now) {
             figures += " · \(countdown)"
         }
         guard !quota.label.isEmpty else { return figures }
-        let label = abbreviate(quota.label, to: secondRowCharacterBudget - figures.count - 1)
+        let label = abbreviate(quota.label, to: secondRowCharacterBudget - displayCells(figures) - 1)
         return label.isEmpty ? figures : "\(label) \(figures)"
     }
 
-    /// How wide the second row may get, in characters.
+    /// How wide the second row may get, in display cells (`displayCells(_:)`).
     ///
     /// The status item is variable width, so the widest line wins; an unbounded
     /// second row ("GitHub Copilot 12% left · 6d 3h") made the item more than
@@ -260,13 +260,42 @@ enum MenubarRowFormatter {
     /// past what the first row alone could already occupy.
     static let secondRowCharacterBudget = 24
 
-    /// Shortens `text` to `limit` characters, marking the cut with an ellipsis.
-    /// Returns "" when there is no room for even one character plus the mark, so
-    /// the caller can drop the part entirely rather than render a bare "…".
+    /// Display cells `text` occupies. A Han, kana or Hangul glyph is about twice
+    /// as wide as a Latin one, so counting Characters lets a translated row
+    /// overrun the very width the budget exists to hold: `6 小时 2 分` is 8
+    /// Characters and 11 cells.
+    ///
+    /// ponytail: the East Asian Wide/Fullwidth blocks the catalog can actually
+    /// contain, not the whole of UAX #11. Widen the ranges if a locale outside
+    /// them ships.
+    static func displayCells(_ text: String) -> Int {
+        text.unicodeScalars.reduce(0) { total, scalar in
+            switch scalar.value {
+            case 0x1100...0x115F, 0x2E80...0xA4CF, 0xAC00...0xD7A3,
+                 0xF900...0xFAFF, 0xFE30...0xFE6F, 0xFF00...0xFF60,
+                 0xFFE0...0xFFE6, 0x20000...0x3FFFD:
+                return total + 2
+            default:
+                return total + 1
+            }
+        }
+    }
+
+    /// Shortens `text` to `limit` display cells, marking the cut with an
+    /// ellipsis. Returns "" when there is no room for even one character plus
+    /// the mark, so the caller can drop the part entirely rather than render a
+    /// bare "…". Identical to a character count for an all-Latin row.
     static func abbreviate(_ text: String, to limit: Int) -> String {
-        guard text.count > limit else { return text }
+        guard displayCells(text) > limit else { return text }
         guard limit >= 2 else { return "" }
-        var kept = String(text.prefix(limit - 1))
+        var kept = ""
+        var used = 0
+        for character in text {
+            let width = displayCells(String(character))
+            if used + width > limit - 1 { break }
+            kept.append(character)
+            used += width
+        }
         while kept.last == " " { kept.removeLast() }
         return kept.isEmpty ? "" : kept + "…"
     }
@@ -299,13 +328,14 @@ enum MenubarRowFormatter {
     static func resetCountdown(_ resetsAt: Date?, now: Date) -> String? {
         guard let resetsAt else { return nil }
         let seconds = max(0, resetsAt.timeIntervalSince(now))
-        if seconds < 60 { return "now" }
+        if seconds < 60 { return L("now") }
         let minutes = Int(seconds / 60)
         let hours = minutes / 60
         let days = hours / 24
-        if days > 0 { return "\(days)d \(hours % 24)h" }
-        if hours > 0 { return "\(hours)h \(minutes % 60)m" }
-        return "\(minutes)m"
+        // d/h/m are unit abbreviations; zh-Hans uses 天/小时/分.
+        if days > 0 { return L("%lldd %lldh", days, hours % 24) }
+        if hours > 0 { return L("%lldh %lldm", hours, minutes % 60) }
+        return L("%lldm", minutes)
     }
 
     /// Menu-bar token shorthand, matching `Double.asCompactTokens()`. Kept here

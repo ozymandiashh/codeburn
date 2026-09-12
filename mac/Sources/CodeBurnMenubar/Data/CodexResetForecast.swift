@@ -448,12 +448,12 @@ enum CodexResetForecast {
 
         let instants = resetInstants(history)
         guard let globalLast = instants.last else {
-            return .unavailable(reason: "No reset history is bundled with this build.", stale: stale)
+            return .unavailable(reason: L("No reset history is bundled with this build."), stale: stale)
         }
         // A record generated in this machine's future is skew, not a fresh
         // dataset. Tolerate an hour for a slow clock; beyond that, say nothing.
         if generatedAt != nil, datasetAgeDays < -1.0 / 24.0 {
-            return .unavailable(reason: "The reset history is dated in the future; check this machine's clock.", stale: false)
+            return .unavailable(reason: L("The reset history is dated in the future; check this machine's clock."), stale: false)
         }
 
         var lastResetAt = globalLast
@@ -468,7 +468,7 @@ enum CodexResetForecast {
 
         let elapsedHours = now.timeIntervalSince(lastResetAt) / hourSeconds
         guard elapsedHours >= 0 else {
-            return .unavailable(reason: "The last reset is dated in the future; check this machine's clock.", stale: stale)
+            return .unavailable(reason: L("The last reset is dated in the future; check this machine's clock."), stale: stale)
         }
 
         // Waits are anchored on the record's own reference point, not on `now`:
@@ -477,9 +477,12 @@ enum CodexResetForecast {
         let reference = max(generatedAt ?? globalLast, globalLast)
         let waitList = waits(from: instants, reference: reference)
         guard waitList.count >= minWaitsForForecast else {
-            let plural = waitList.count == 1 ? "" : "s"
+            // Two sentences rather than a pluralising suffix: "wait"/"waits" is
+            // an English rule and not every language has it.
             return .unavailable(
-                reason: "Only \(waitList.count) inter-reset wait\(plural) in the record; not enough to say anything.",
+                reason: waitList.count == 1
+                    ? L("Only 1 inter-reset wait in the record; not enough to say anything.")
+                    : L("Only %lld inter-reset waits in the record; not enough to say anything.", waitList.count),
                 stale: stale
             )
         }

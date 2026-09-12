@@ -377,7 +377,7 @@ struct MenubarSecondRowTests {
         )
         // Both figures survive; the name is what gives way.
         #expect(row == "GitHub… 12% left · 6d 3h")
-        #expect(row?.count == MenubarRowFormatter.secondRowCharacterBudget)
+        #expect(MenubarRowFormatter.displayCells(row ?? "") == MenubarRowFormatter.secondRowCharacterBudget)
     }
 
     @Test("no metric can produce a row past the budget")
@@ -397,7 +397,7 @@ struct MenubarSecondRowTests {
         for metric in MenubarSecondRowMetric.allCases {
             let row = MenubarRowFormatter.secondRow(settings: settings(true, metric), snapshot: wide, now: now)
             #expect(row != nil)
-            #expect((row?.count ?? 0) <= MenubarRowFormatter.secondRowCharacterBudget)
+            #expect(MenubarRowFormatter.displayCells(row ?? "") <= MenubarRowFormatter.secondRowCharacterBudget)
         }
     }
 
@@ -413,6 +413,24 @@ struct MenubarSecondRowTests {
         #expect(MenubarRowFormatter.abbreviate("Claude", to: 0) == "")
         #expect(MenubarRowFormatter.abbreviate("Claude", to: -3) == "")
         #expect(MenubarRowFormatter.clampToRowBudget("12 sess") == "12 sess")
+    }
+
+    @Test("a wide-glyph row is budgeted by the width it draws, not its character count")
+    func wideGlyphsCountDouble() {
+        // "6 小时 2 分" is 8 Characters and 11 cells. Counting Characters let a
+        // zh-Hans row draw about a third wider than the budget allows.
+        #expect(MenubarRowFormatter.displayCells("6 小时 2 分") == 11)
+        #expect(MenubarRowFormatter.displayCells("GitHub Copilot") == 14)
+        // An all-Latin row is unchanged: cells and characters agree.
+        #expect(MenubarRowFormatter.abbreviate("GitHub Copilot", to: 8) == "GitHub…")
+        // Two wide glyphs already fill four cells, so a five-cell limit keeps
+        // one of them plus the mark.
+        #expect(MenubarRowFormatter.abbreviate("剩余配额跟踪", to: 5) == "剩余…")
+        #expect(
+            MenubarRowFormatter.displayCells(
+                MenubarRowFormatter.clampToRowBudget("GitHub Copilot 剩余 12% · 6 小时 2 分")
+            ) <= MenubarRowFormatter.secondRowCharacterBudget
+        )
     }
 
     @Test("an unlabelled provider keeps the full figures")
