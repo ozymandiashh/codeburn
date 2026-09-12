@@ -162,50 +162,77 @@ enum LocalizationSourceScanner {
         return findings.sorted { ($0.line, $0.literal) < ($1.line, $1.literal) }
     }
 
-    // MARK: - Display-label properties
+    // MARK: - Copy-bearing declarations
 
-    /// Computed `String` properties this codebase uses to give an enum its
-    /// on-screen name — the Settings pickers render exactly these.
+    /// Types whose whole job is producing sentences for the user.
     ///
-    /// They are not call sites, so the call-site scan above cannot see them:
-    /// `case .quotaRemaining: "Quota remaining"` is just a string returned from
-    /// a switch. Yet a new `MenubarSecondRowMetric` case is precisely how the
-    /// next untranslated picker option would arrive, so the property bodies get
-    /// their own pass.
-    static let displayLabelProperties: [String] = [
+    /// This codebase puts the wording for a feature in a `…Presentation` (or
+    /// `…Format`) type so the views stay thin and the copy stays testable —
+    /// `CopilotQuotaPresentation`, `ProviderReconnectPresentation`,
+    /// `CodexBankedResetPresentation`, `QuotaPacePresentation`,
+    /// `EarlyQuotaResetFormat`. Every `String` a type like that returns is copy
+    /// by construction.
+    ///
+    /// This is the pass that the second merge from main proved was missing:
+    /// #1328 and #1329 each arrived as a new presentation type holding dozens of
+    /// English sentences, and neither the call-site pass nor the display-label
+    /// pass could see a single one of them — the views only ever render
+    /// `Text(presentation.caption)`.
+    static let copyBearingTypeSuffixes: [String] = ["Presentation", "Format"]
+
+    /// Members that carry copy wherever they are declared, whatever the type is
+    /// called. `displayName`/`displayLabel`/`settingsLabel` name an enum for a
+    /// picker; the rest are the notification, dock-band and hover-caption
+    /// accessors the quota features hang their wording off.
+    static let copyBearingMembers: Set<String> = [
         "displayName",
         "displayLabel",
         "settingsLabel",
+        "notificationTitle",
+        "notificationBody",
+        "noticeText",
+        "noticeHelpText",
+        "caption",
+        "helpText",
+        "rowLabel",
     ]
 
-    /// Properties that legitimately return untranslated text, with the reason.
+    /// Declarations that legitimately return untranslated text, with the reason.
     ///
-    /// This is the documented denylist. It names the declaring type as well as
-    /// the property so that adding a `displayName` elsewhere is still guarded.
+    /// This is the documented denylist. Each entry names the declaring type as
+    /// well as the member, so exempting one `displayName` does not exempt every
+    /// `displayName` in the app.
     ///
     /// - `CapacityDockGlanceWindowKind.displayName` — a stand-in for a provider's
-    ///   own window label ("Weekly", "5-hour"), used only when the provider
+    ///   own window label ("weekly", "5-hour"), used only when the provider
     ///   publishes none. Those labels are provider data and are never
     ///   translated, so translating the fallback alone would make the same
     ///   VoiceOver sentence half-Chinese depending on which provider is
     ///   selected.
-    /// - `CapacityDockProvider.displayName` and `CodexUsage.*.displayName` —
-    ///   provider, model and plan names, which the catalog header lists as
-    ///   verbatim in every locale.
-    static let untranslatedLabelProperties: Set<String> = [
+    /// - `CapacityDockProvider.displayName`,
+    ///   `CapacityDockProviderCatalogEntry.displayName`, `PlanType.displayName`,
+    ///   `Tier.displayName` — provider, model and plan names, which the catalog
+    ///   header lists as verbatim in every locale.
+    /// - `ExportFormat.cliName`, `ExportFormat.suffix` — caught only because the
+    ///   type's name ends in "Format"; it is an export-format enum, not a
+    ///   formatter of copy. These return a `codeburn` CLI argument value and a
+    ///   file extension, neither of which is ever shown as prose.
+    static let untranslatedCopyDeclarations: Set<String> = [
         "CapacityDockGlanceWindowKind.displayName",
         "CapacityDockProvider.displayName",
         "CapacityDockProviderCatalogEntry.displayName",
         "PlanType.displayName",
         "Tier.displayName",
+        "ExportFormat.cliName",
+        "ExportFormat.suffix",
     ]
 
-    /// Bare literals returned from a display-label property.
-    static func unroutedLabelProperties(in directory: URL) throws -> [Finding] {
+    /// Bare literals returned from a copy-bearing declaration.
+    static func unroutedCopyDeclarations(in directory: URL) throws -> [Finding] {
         var findings: [Finding] = []
         for file in try swiftFiles(in: directory) {
             let source = try String(contentsOf: file, encoding: .utf8)
-            findings += unroutedLabelProperties(
+            findings += unroutedCopyDeclarations(
                 inSource: source,
                 fileName: file.lastPathComponent
             )
@@ -215,23 +242,31 @@ enum LocalizationSourceScanner {
         }
     }
 
-    static func unroutedLabelProperties(inSource source: String, fileName: String) -> [Finding] {
+    static func unroutedCopyDeclarations(inSource source: String, fileName: String) -> [Finding] {
         let code = Array(strippingComments(source))
+        let types = typeDeclarations(in: code)
         var findings: [Finding] = []
 
-        for property in displayLabelProperties {
-            let needle = Array("var \(property): String")
+        for keyword in ["var ", "func "] {
+            let needle = Array(keyword)
             var index = 0
             while index + needle.count <= code.count {
-                guard Array(code[index..<(index + needle.count)]) == needle else {
+                guard Array(code[index..<(index + needle.count)]) == needle,
+                      startsAWord(needle, at: index, in: code) else {
                     index += 1
                     continue
                 }
-                let owner = enclosingTypeName(before: index, in: code)
-                let qualified = "\(owner).\(property)"
+                let declaration = index
                 index += needle.count
-                guard !untranslatedLabelProperties.contains(qualified) else { continue }
-                guard let body = propertyBody(in: code, after: index) else { continue }
+                guard let header = declarationHeader(in: code, from: declaration),
+                      returnsString(header.text) else { continue }
+                let owner = types.last { $0.offset < declaration }?.name ?? "?"
+                let name = memberName(header.text, keyword: keyword)
+                let qualified = "\(owner).\(name)"
+                guard !untranslatedCopyDeclarations.contains(qualified) else { continue }
+                let isCopyType = copyBearingTypeSuffixes.contains { owner.hasSuffix($0) }
+                guard isCopyType || copyBearingMembers.contains(name) else { continue }
+                guard let body = propertyBody(in: code, after: header.braceOffset) else { continue }
                 for literal in valuePositionLiterals(in: Array(code[body])) where needsTranslation(literal.value) {
                     findings.append(
                         Finding(
@@ -245,6 +280,49 @@ enum LocalizationSourceScanner {
             }
         }
         return findings.sorted { ($0.line, $0.literal) < ($1.line, $1.literal) }
+    }
+
+    /// The text of a declaration up to its opening brace, or nil when it has no
+    /// body (a stored property, a protocol requirement).
+    static func declarationHeader(
+        in code: [Character],
+        from start: Int
+    ) -> (text: String, braceOffset: Int)? {
+        var text = ""
+        var depth = 0
+        var i = start
+        while i < code.count {
+            let c = code[i]
+            // Only parentheses and brackets nest here. Angle brackets must NOT
+            // count: the `>` in `-> String` would close a bracket that never
+            // opened, leave the depth negative, and make every function
+            // invisible to this pass — which is exactly the bug that let
+            // `QuotaPacePresentation.caption` through.
+            if c == "(" || c == "[" { depth += 1 }
+            if c == ")" || c == "]" { depth -= 1 }
+            if depth == 0, c == "{" { return (text, i) }
+            // `=` starts a stored value and `;`/`}` end the declaration: either
+            // way there is no computed body to look inside.
+            if depth == 0, c == "=" || c == ";" || c == "}" { return nil }
+            text.append(c)
+            i += 1
+        }
+        return nil
+    }
+
+    /// Whether a declaration header declares a `String` result. The tuple form
+    /// is the shape the banked-reset notification uses.
+    static func returnsString(_ header: String) -> Bool {
+        let squeezed = header.filter { !$0.isWhitespace }
+        return squeezed.hasSuffix(":String")
+            || squeezed.hasSuffix(":String?")
+            || squeezed.hasSuffix("->String")
+            || squeezed.hasSuffix("->String?")
+            || squeezed.contains("->(title:String,body:String)")
+    }
+
+    static func memberName(_ header: String, keyword: String) -> String {
+        String(header.dropFirst(keyword.count).prefix { $0.isLetter || $0.isNumber || $0 == "_" })
     }
 
     /// The brace-balanced body that follows a property declaration.
@@ -282,16 +360,32 @@ enum LocalizationSourceScanner {
     static func valuePositionLiterals(in code: [Character]) -> [(value: String, offset: Int)] {
         var found: [(value: String, offset: Int)] = []
         var depth = 0
+        // A `case "five_hour":` literal is a pattern being matched, not copy
+        // being produced. Without this, every string-keyed switch in a
+        // copy-bearing type reports its own match keys.
+        var inCasePattern = false
         var i = 0
         while i < code.count {
+            if !inCasePattern, depth == 0, matchesKeyword("case", at: i, in: code) {
+                inCasePattern = true
+                i += 4
+                continue
+            }
             switch code[i] {
             case "(", "[":
                 depth += 1
             case ")", "]":
                 depth -= 1
+            case ":" where depth == 0, "\n":
+                // A pattern list ends at its colon; the newline is the backstop
+                // for `if case`/`guard case`, which have no colon at all and
+                // would otherwise swallow the rest of the body.
+                inCasePattern = false
             case "\"":
                 guard let literal = stringLiteral(in: code, startingAt: i) else { break }
-                if depth == 0 { found.append((value: literal.value, offset: i)) }
+                if depth == 0, !inCasePattern {
+                    found.append((value: literal.value, offset: i))
+                }
                 i = literal.end
                 continue
             default:
@@ -302,18 +396,40 @@ enum LocalizationSourceScanner {
         return found
     }
 
+    /// Whether `word` appears at `index` as a whole identifier.
+    static func matchesKeyword(_ word: String, at index: Int, in code: [Character]) -> Bool {
+        let needle = Array(word)
+        guard index + needle.count <= code.count,
+              Array(code[index..<(index + needle.count)]) == needle,
+              startsAWord(needle, at: index, in: code) else { return false }
+        let after = index + needle.count
+        guard after < code.count else { return true }
+        return !(code[after].isLetter || code[after].isNumber || code[after] == "_")
+    }
+
     /// The nearest `enum`/`struct`/`class`/`extension` name declared above
     /// `index`, so a denylist entry can name the type it exempts.
+    ///
+    /// Nearest-preceding, not brace-scoped: a member declared after a nested
+    /// type's closing brace is attributed to that nested type rather than the
+    /// outer one. That is imprecise but self-consistent — a finding prints the
+    /// qualified name verbatim, and that is the string to paste into
+    /// `untranslatedCopyDeclarations` — and it fails toward guarding more, never
+    /// less.
     static func enclosingTypeName(before index: Int, in code: [Character]) -> String {
+        typeDeclarations(in: code).last { $0.offset < index }?.name ?? "?"
+    }
+
+    /// Every type declaration in source order, as (offset, name).
+    ///
+    /// Built once per file and searched, rather than rescanning the file for
+    /// each member: the previous shape was quadratic and took minutes on
+    /// AppStore.swift alone.
+    static func typeDeclarations(in code: [Character]) -> [(offset: Int, name: String)] {
         let keywords = ["enum ", "struct ", "final class ", "class ", "extension "].map(Array.init)
-        var best = "?"
+        var found: [(offset: Int, name: String)] = []
         var i = 0
-        // One pass in source order, so the *nearest* preceding declaration wins.
-        // Scanning keyword-by-keyword instead would make the answer depend on
-        // the order of the keyword list: `enum PlanType` nested inside
-        // `struct CodexUsage` would report the outer type and quietly miss its
-        // denylist entry.
-        while i < min(index, code.count) {
+        while i < code.count {
             for needle in keywords where i + needle.count <= code.count {
                 guard Array(code[i..<(i + needle.count)]) == needle,
                       startsAWord(needle, at: i, in: code) else { continue }
@@ -323,11 +439,11 @@ enum LocalizationSourceScanner {
                     name.append(code[j])
                     j += 1
                 }
-                if !name.isEmpty { best = name }
+                if !name.isEmpty { found.append((offset: i, name: name)) }
             }
             i += 1
         }
-        return best
+        return found
     }
 
     // MARK: - Keys the code asks for

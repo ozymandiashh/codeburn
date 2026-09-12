@@ -59,9 +59,9 @@ struct LocalizationCoverageTests {
         )
     }
 
-    @Test("every display-label property in mac/Sources is routed through L(…)")
-    func everyDisplayLabelIsRouted() throws {
-        let findings = try LocalizationSourceScanner.unroutedLabelProperties(in: Self.sourcesDirectory)
+    @Test("every copy-bearing declaration in mac/Sources is routed through L(…)")
+    func everyCopyDeclarationIsRouted() throws {
+        let findings = try LocalizationSourceScanner.unroutedCopyDeclarations(in: Self.sourcesDirectory)
         #expect(
             findings.isEmpty,
             """
@@ -69,10 +69,12 @@ struct LocalizationCoverageTests {
 
             \(findings.map(\.description).joined(separator: "\n"))
 
-            A new enum case whose display name is a bare literal is how an \
-            untranslated Settings picker option arrives. Wrap it in L("…"), or — \
-            if the property returns provider, model or plan names — add it to \
-            LocalizationSourceScanner.untranslatedLabelProperties with a reason.
+            A new enum case whose display name is a bare literal, or a new \
+            …Presentation type holding a feature's sentences, is how untranslated \
+            copy arrives. Wrap each literal in L("…"), or — if the declaration \
+            returns provider, model or plan names, or a machine identifier — add \
+            the qualified name exactly as printed above to \
+            LocalizationSourceScanner.untranslatedCopyDeclarations, with a reason.
             """
         )
     }
@@ -262,7 +264,7 @@ struct LocalizationCoverageTests {
         }
         """
         #expect(
-            LocalizationSourceScanner.unroutedLabelProperties(inSource: bare, fileName: "M.swift")
+            LocalizationSourceScanner.unroutedCopyDeclarations(inSource: bare, fileName: "M.swift")
                 .map(\.literal) == ["Quota remaining", "Today's cost"]
         )
 
@@ -277,7 +279,7 @@ struct LocalizationCoverageTests {
         }
         """
         #expect(
-            LocalizationSourceScanner.unroutedLabelProperties(inSource: routed, fileName: "M.swift").isEmpty
+            LocalizationSourceScanner.unroutedCopyDeclarations(inSource: routed, fileName: "M.swift").isEmpty
         )
     }
 
@@ -295,7 +297,7 @@ struct LocalizationCoverageTests {
         }
         """
         #expect(
-            LocalizationSourceScanner.unroutedLabelProperties(inSource: source, fileName: "C.swift").isEmpty
+            LocalizationSourceScanner.unroutedCopyDeclarations(inSource: source, fileName: "C.swift").isEmpty
         )
     }
 
@@ -313,7 +315,7 @@ struct LocalizationCoverageTests {
         }
         """
         #expect(
-            LocalizationSourceScanner.unroutedLabelProperties(inSource: exempt, fileName: "P.swift").isEmpty
+            LocalizationSourceScanner.unroutedCopyDeclarations(inSource: exempt, fileName: "P.swift").isEmpty
         )
 
         // …while the same property name on another type is still guarded.
@@ -327,8 +329,90 @@ struct LocalizationCoverageTests {
         }
         """
         #expect(
-            LocalizationSourceScanner.unroutedLabelProperties(inSource: guarded, fileName: "A.swift")
+            LocalizationSourceScanner.unroutedCopyDeclarations(inSource: guarded, fileName: "A.swift")
                 .map(\.literal) == ["Flame orange"]
+        )
+    }
+
+    @Test("a presentation type's sentences are copy, however they are returned")
+    func flagsPresentationTypeCopy() {
+        // #1328 and #1329 each arrived as a type shaped exactly like this, and
+        // the views only ever render `Text(presentation.caption)` — so neither
+        // the call-site pass nor the member-name list could see any of it.
+        let bare = """
+        enum EarlyQuotaResetPresentation {
+            static func caption(_ n: Int) -> String {
+                "Limit reached"
+            }
+            static var rowLabel: String { "Limit resets" }
+        }
+        """
+        #expect(
+            LocalizationSourceScanner.unroutedCopyDeclarations(inSource: bare, fileName: "P.swift")
+                .map(\.literal) == ["Limit reached", "Limit resets"]
+        )
+
+        let routed = """
+        enum EarlyQuotaResetPresentation {
+            static func caption(_ n: Int) -> String {
+                L("Limit reached")
+            }
+            static var rowLabel: String { L("Limit resets") }
+        }
+        """
+        #expect(
+            LocalizationSourceScanner.unroutedCopyDeclarations(inSource: routed, fileName: "P.swift").isEmpty
+        )
+    }
+
+    @Test("a function returning String is seen — the arrow is not a bracket")
+    func seesFunctionsReturningString() {
+        // `->` used to drive the header parser's bracket depth negative, which
+        // made every `func … -> String` invisible to this pass while the `var`
+        // form was still caught.
+        let source = """
+        enum PacePresentation {
+            static func caption(for result: Result, now: Date = Date()) -> String {
+                "On pace"
+            }
+        }
+        """
+        #expect(
+            LocalizationSourceScanner.unroutedCopyDeclarations(inSource: source, fileName: "P.swift")
+                .map(\.literal) == ["On pace"]
+        )
+    }
+
+    @Test("a switch pattern is matched against, not shown")
+    func ignoresSwitchPatterns() {
+        let source = """
+        enum WindowFormat {
+            static func name(forKey key: String) -> String {
+                switch key {
+                case "five_hour": L("5-hour limit")
+                case "seven_day": L("weekly limit")
+                default: key
+                }
+            }
+        }
+        """
+        #expect(
+            LocalizationSourceScanner.unroutedCopyDeclarations(inSource: source, fileName: "W.swift").isEmpty
+        )
+    }
+
+    @Test("a type caught only by its name suffix can be denylisted")
+    func denylistsNonCopyFormatTypes() {
+        // ExportFormat ends in "Format" but is an export-format enum; its
+        // members are a CLI argument value and a file extension.
+        let source = """
+        enum ExportFormat {
+            var cliName: String { "csv" }
+            var suffix: String { ".json" }
+        }
+        """
+        #expect(
+            LocalizationSourceScanner.unroutedCopyDeclarations(inSource: source, fileName: "E.swift").isEmpty
         )
     }
 
