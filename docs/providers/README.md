@@ -51,6 +51,7 @@ For the architectural picture, see `../architecture.md`.
 | [Cursor](cursor.md) | SQLite | `src/providers/cursor.ts` | `tests/providers/cursor.test.ts` |
 | [Cursor Agent](cursor-agent.md) | text / JSONL | `src/providers/cursor-agent.ts` | `tests/providers/cursor-agent.test.ts` |
 | [Goose](goose.md) | SQLite | `src/providers/goose.ts` | none |
+| [Muse Code](muse-code.md) | JSONL | `src/providers/muse-code.ts` | `tests/providers/muse-code.test.ts` |
 | [OpenCode](opencode.md) | SQLite | `src/providers/opencode.ts` | `tests/providers/opencode.test.ts` |
 | [Warp](warp.md) | SQLite | `src/providers/warp.ts` | `tests/providers/warp.test.ts` |
 | [Vercel AI Gateway](vercel-gateway.md) | REST API | `src/providers/vercel-gateway.ts` | `tests/providers/vercel-gateway.test.ts` |
