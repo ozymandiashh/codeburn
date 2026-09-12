@@ -2197,6 +2197,12 @@ private struct CodexPlanInsight: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            // The chance of a global reset landing soon, in the same words the
+            // quota hover card and `codeburn quota` use. Sits with the pace
+            // captions because it answers the same question they do, one step
+            // further out: this is a probability, not a schedule, and the
+            // wording carries its range.
+            resetForecastRows
         }
         .padding(.horizontal, 14)
         .padding(.top, 4)
@@ -2239,6 +2245,25 @@ private struct CodexPlanInsight: View {
             deltaPercent: result.deltaPercent,
             compact: TimeInterval(windowSeconds) <= QuotaPace.etaSuppressionMaxSeconds
         )
+    }
+
+    /// Silent when the bundled record cannot support a forecast: an absent
+    /// estimate reads as absent, never as a zero chance.
+    @ViewBuilder
+    private var resetForecastRows: some View {
+        let lines = CodexResetForecastPresentation.lines(for: store.codexResetForecast())
+        if !lines.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                    Text(line)
+                        .font(.system(size: 10.5, weight: index == 0 ? .medium : .regular))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func resetCreditsLabel(_ resets: CodexUsage.ResetCredits) -> String {

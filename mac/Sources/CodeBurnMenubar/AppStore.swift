@@ -234,6 +234,15 @@ final class AppStore {
     @ObservationIgnored var codexQuotaBootstrapChecker: @Sendable () -> Bool = {
         CodexCredentialStore.isBootstrapCompleted
     }
+    /// Watches the reset forecast computed from the bundled reset history and
+    /// posts the opt-in notice when it crosses the user's threshold. Injectable
+    /// so tests never touch the real notification centre or the cache
+    /// directory. Owns no fetch and no timer: it is driven by the Codex quota
+    /// refresh that already runs.
+    @ObservationIgnored var codexResetForecastAnnouncer = CodexResetForecastAnnouncer()
+    /// The clock the forecast is evaluated against. Overridden in tests so the
+    /// probabilities a fixture produces are deterministic.
+    @ObservationIgnored var codexResetForecastClock: @Sendable () -> Date = { Date() }
     @ObservationIgnored var capacityDockCredentialLoader:
         @Sendable (String) async throws -> CapacityDockProviderCredential = {
             try await CapacityDockProviderCredentialStore.loadAsync(for: $0)
@@ -1619,6 +1628,7 @@ final class AppStore {
             codexUsage = usage
             codexError = nil
             codexLoadState = .loaded
+            await announceCodexResetForecast()
         } catch let err as CodexSubscriptionService.FetchError {
             applyCodexFetchError(err)
         } catch {
@@ -1656,6 +1666,10 @@ final class AppStore {
             codexError = nil
             codexLoadState = .loaded
             finishCodexQuotaRefresh(token)
+            // After the refresh is finished, not inside it: announcing is a
+            // side-effect of a successful fetch and must not be able to hold
+            // the single-flight token open.
+            await announceCodexResetForecast()
             return true
         } catch let err as CodexSubscriptionService.FetchError {
             guard isCurrentCodexQuotaRefresh(token) else { return false }
@@ -1697,6 +1711,9 @@ final class AppStore {
         codexUsage = nil
         codexError = nil
         codexLoadState = .notBootstrapped
+        // A reconnect starts from a clean crossing rather than inheriting the
+        // armed/fired state of the session before it.
+        Task.detached { await CodexResetForecastStore.clearAll() }
         NotificationCenter.default.post(name: .codeBurnSubscriptionDisconnected, object: nil)
     }
 
@@ -2652,7 +2669,34 @@ final class AppStore {
         if codexUsage?.creditLimit == nil, codexUsage?.creditsUnlimited == true {
             footerLines.append("Credits · Unlimited")
         }
+        // The chance of a global usage-limit reset landing soon, from the reset
+        // history bundled with this build. Arithmetic over a file: no fetch, no
+        // cadence, nothing account-specific. Shown only while the account is
+        // actually connected, so a signed-out machine is not told about
+        // capacity it cannot use.
+        if connection == .connected {
+            footerLines.append(contentsOf: CodexResetForecastPresentation.lines(for: codexResetForecast()))
+        }
         return QuotaSummary(providerFilter: filter, connection: connection, primary: primary, details: details, planLabel: plan, footerLines: footerLines)
+    }
+
+    /// The Codex reset forecast for this moment, over the bundled record.
+    /// Local resets this machine observed for itself would be passed here; the
+    /// early-quota-reset detector (#1320) and the banked-credit watcher (#1322)
+    /// are the intended sources, and with none the forecast conditions on the
+    /// global record, which is what it does today.
+    func codexResetForecast(localEvents: [CodexResetForecast.LocalResetEvent] = []) -> CodexResetForecast.Result {
+        CodexResetForecast.evaluate(
+            history: CodexResetForecast.bundled,
+            now: codexResetForecastClock(),
+            localEvents: localEvents
+        )
+    }
+
+    /// Hands the current forecast to the opt-in crossing notice. Silent unless
+    /// the user switched it on and picked a threshold the estimate crosses.
+    func announceCodexResetForecast() async {
+        await codexResetForecastAnnouncer.observe(codexResetForecast(), now: codexResetForecastClock())
     }
 
     private func kimiQuotaSummary(filter: ProviderFilter) -> QuotaSummary? {

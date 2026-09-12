@@ -391,6 +391,14 @@ private struct GeneralSettingsTab: View {
     @AppStorage(UpdateNotificationPreference.defaultsKey)
     private var notifyAboutUpdates: Bool = true
 
+    // Off by default, unlike every other notification here: this one reports a
+    // probability rather than something that already happened.
+    @AppStorage(CodexResetForecastNotificationPreference.defaultsKey)
+    private var notifyAboutResetForecast: Bool = false
+
+    @AppStorage(CodexResetForecastThresholdPreference.defaultsKey)
+    private var resetForecastThreshold: Double = CodexResetForecastThresholdPreference.defaultValue
+
     private let costPresets: Set<Double> = [25, 50, 100, 200, 500]
     private let tokenPresets: Set<Double> = [1_000_000, 5_000_000, 10_000_000, 25_000_000, 50_000_000, 100_000_000]
 
@@ -507,6 +515,19 @@ private struct GeneralSettingsTab: View {
             Section("Updates") {
                 Toggle("Notify me about updates", isOn: $notifyAboutUpdates)
                 Text("Posts a notification when a new CodeBurn release is available. Click it to install.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Codex Reset Forecast") {
+                Toggle("Notify me when a Codex reset looks likely", isOn: $notifyAboutResetForecast)
+                Picker("Notify at", selection: $resetForecastThreshold) {
+                    ForEach(CodexResetForecastThresholdPreference.choices, id: \.self) { choice in
+                        Text("\(Int((choice * 100).rounded()))% chance within 6 hours").tag(choice)
+                    }
+                }
+                .disabled(!notifyAboutResetForecast)
+                Text("CodeBurn estimates the chance of OpenAI resetting Codex usage limits from the public record of past resets that ships with the app. This is a statistical estimate, never an announcement, and it is often wrong. Nothing is fetched at runtime, nothing is spent, and the notice never acts on its own. You get at most one notice per crossing; it re-arms when the estimate falls back under your threshold.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
