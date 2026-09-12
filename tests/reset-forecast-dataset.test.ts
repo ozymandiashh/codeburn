@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
@@ -12,12 +13,28 @@ import {
 import { resetInstants } from '../src/reset-forecast.js'
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
-// Spelled out rather than taken from `datasetPaths`, so a refresh script that
-// stopped writing one of the two copies could not make this check vacuous.
-const canonicalPath = `${repoRoot}src/data/codex-reset-history.json`
-const bundledPath = `${repoRoot}mac/Sources/CodeBurnMenubar/Resources/CodexResetHistory/codex-reset-history.json`
+// Spelled out segment by segment rather than taken from `datasetPaths`, so a
+// refresh script that stopped writing one of the two copies could not make this
+// check vacuous — and joined rather than written with '/', because the
+// separator is '\\' on Windows and a hand-written path only matches on POSIX.
+const CANONICAL_SEGMENTS = ['src', 'data', 'codex-reset-history.json']
+const BUNDLED_SEGMENTS = ['mac', 'Sources', 'CodeBurnMenubar', 'Resources', 'CodexResetHistory', 'codex-reset-history.json']
+const canonicalPath = join(repoRoot, ...CANONICAL_SEGMENTS)
+const bundledPath = join(repoRoot, ...BUNDLED_SEGMENTS)
 const canonicalText = readFileSync(canonicalPath, 'utf8')
 const dataset = JSON.parse(canonicalText)
+
+/** Path segments, whichever separator this platform uses. */
+function segments(path: string): string[] {
+  return path.split(/[\\/]/).filter(Boolean)
+}
+
+/** Git on Windows can check a committed file out with CRLF. The two copies are
+ *  written identically by the refresh script; comparing them must test that,
+ *  not the runner's checkout settings. */
+function normalizeNewlines(text: string): string {
+  return text.replace(/\r\n/g, '\n')
+}
 
 describe('the committed dataset', () => {
   it('validates against the same rules the refresh workflow applies', () => {
@@ -56,14 +73,31 @@ describe('the committed dataset', () => {
   })
 
   it('is written to both copies by the refresh script', () => {
+    const [canonical, bundled] = datasetPaths(repoRoot)
+    // The invariant is which files are written, not how this platform spells a
+    // path, so the tail segments are what is pinned.
+    expect(segments(canonical).slice(-CANONICAL_SEGMENTS.length)).toEqual(CANONICAL_SEGMENTS)
+    expect(segments(bundled).slice(-BUNDLED_SEGMENTS.length)).toEqual(BUNDLED_SEGMENTS)
     expect(datasetPaths(repoRoot)).toEqual([canonicalPath, bundledPath])
+  })
+
+  it('addresses both copies the same way on a Windows separator', () => {
+    // #1291's lesson: a path assertion that only holds on POSIX is a test that
+    // fails on the Windows runner and nowhere a developer will see it.
+    const windowsish = 'C:\\\\src\\\\repo\\\\mac\\\\Sources\\\\CodeBurnMenubar\\\\Resources\\\\CodexResetHistory\\\\codex-reset-history.json'
+    expect(segments(windowsish).slice(-BUNDLED_SEGMENTS.length)).toEqual(BUNDLED_SEGMENTS)
+    expect(segments('/home/u/repo/src/data/codex-reset-history.json').slice(-CANONICAL_SEGMENTS.length))
+      .toEqual(CANONICAL_SEGMENTS)
   })
 
   it('is byte-identical to the copy the menubar bundles', () => {
     // SwiftPM resources must live inside the target directory, so the record
     // exists twice. The refresh workflow writes both; this is what stops them
     // drifting apart between refreshes.
-    expect(readFileSync(bundledPath, 'utf8')).toBe(canonicalText)
+    const bundledText = readFileSync(bundledPath, 'utf8')
+    expect(normalizeNewlines(bundledText)).toBe(normalizeNewlines(canonicalText))
+    // Content, not just bytes: this is what the two readers actually consume.
+    expect(JSON.parse(bundledText)).toEqual(dataset)
   })
 })
 

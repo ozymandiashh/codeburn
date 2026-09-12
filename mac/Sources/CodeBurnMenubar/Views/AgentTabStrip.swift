@@ -428,6 +428,19 @@ private struct QuotaDetailPopover: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            // Below its own divider, and below the provider's own facts: this is
+            // an estimate over a public record, not something the account said.
+            if !quota.forecastLines.isEmpty {
+                Divider()
+                    .padding(.top, 2)
+                ForEach(Array(quota.forecastLines.enumerated()), id: \.offset) { index, line in
+                    Text(line)
+                        .font(.system(size: 10.5, weight: index == 0 ? .medium : .regular))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                }
+            }
         }
     }
 

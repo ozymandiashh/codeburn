@@ -36,6 +36,16 @@ struct QuotaSummary: Equatable {
     /// Used for provider-specific facts such as account identity, remaining
     /// credits, source attribution, and retry diagnostics.
     let footerLines: [String]
+    /// Lines that are not a fact the provider reported but an estimate derived
+    /// from data the provider never sent — today, only the Codex reset forecast.
+    ///
+    /// Deliberately not folded into `footerLines`. That is the adapter's
+    /// normalized output and several surfaces consume it verbatim; an estimate
+    /// stacked into it would put words in the adapter's mouth and couple every
+    /// one of those consumers to a feature none of them asked for. Defaulted, so
+    /// every existing construction site is unchanged and every provider that
+    /// does not set it reports exactly what it reported before.
+    var forecastLines: [String] = []
 
     struct Window: Equatable {
         let label: String

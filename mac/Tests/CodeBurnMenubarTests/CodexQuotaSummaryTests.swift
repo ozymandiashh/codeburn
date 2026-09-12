@@ -82,4 +82,36 @@ struct CodexQuotaSummaryTests {
         let store = store(usage(creditLimit: limit(used: 10_000, of: 10_000, reached: true)))
         #expect(store.quotaSummary(for: .codex)?.primary?.label == "Monthly usage limit · limit reached")
     }
+
+    // The reset forecast is an estimate over a public record, not something the
+    // account reported, so it must never reach `footerLines` — which is the
+    // adapter's normalized output and is consumed verbatim by the Capacity Dock,
+    // the hover card and every test above. It rides its own field instead.
+
+    @Test("the reset forecast never lands in the adapter's footer lines")
+    func forecastStaysOutOfFooterLines() {
+        let store = store(usage(hasCredits: true, unlimited: true))
+        let summary = store.quotaSummary(for: .codex)
+        #expect(summary?.footerLines == ["Credits · Unlimited"])
+        #expect(summary?.footerLines.contains { $0.hasPrefix("Reset forecast") } == false)
+    }
+
+    @Test("the reset forecast rides its own field on a connected account")
+    func forecastRidesItsOwnField() {
+        let store = store(usage(hasCredits: true, unlimited: true))
+        let summary = store.quotaSummary(for: .codex)
+        #expect(summary?.forecastLines.isEmpty == false)
+        #expect(summary?.forecastLines.first?.hasPrefix("Reset forecast: ") == true)
+    }
+
+    @Test("a provider that reports no forecast carries an empty field, not a placeholder")
+    func otherProvidersCarryNoForecast() {
+        // Every other adapter uses the defaulted initializer, so nothing about
+        // their summaries changed.
+        let summary = QuotaSummary(
+            providerFilter: .claude, connection: .connected, primary: nil,
+            details: [], planLabel: nil, footerLines: []
+        )
+        #expect(summary.forecastLines.isEmpty)
+    }
 }

@@ -2672,12 +2672,16 @@ final class AppStore {
         // The chance of a global usage-limit reset landing soon, from the reset
         // history bundled with this build. Arithmetic over a file: no fetch, no
         // cadence, nothing account-specific. Shown only while the account is
-        // actually connected, so a signed-out machine is not told about
-        // capacity it cannot use.
-        if connection == .connected {
-            footerLines.append(contentsOf: CodexResetForecastPresentation.lines(for: codexResetForecast()))
-        }
-        return QuotaSummary(providerFilter: filter, connection: connection, primary: primary, details: details, planLabel: plan, footerLines: footerLines)
+        // actually connected, so a signed-out machine is not told about capacity
+        // it cannot use — and carried in its own field, so `footerLines` stays
+        // exactly what the adapter reported.
+        let forecastLines = connection == .connected
+            ? CodexResetForecastPresentation.lines(for: codexResetForecast())
+            : []
+        return QuotaSummary(
+            providerFilter: filter, connection: connection, primary: primary, details: details,
+            planLabel: plan, footerLines: footerLines, forecastLines: forecastLines
+        )
     }
 
     /// The Codex reset forecast for this moment, over the bundled record.
