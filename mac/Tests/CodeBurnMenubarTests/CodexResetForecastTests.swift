@@ -706,12 +706,16 @@ private struct LocalEventSandbox {
     }
 }
 
-@Test func theLoaderReadsTheExactStoresTheSiblingBranchesWriteTo() {
+@MainActor
+@Test func theLoaderReadsTheExactStoresTheSiblingFeaturesWriteTo() {
     // Literal, not symbolic: a typo in either address means the loader silently
     // reads nothing and the last-reset clock quietly goes back to being frozen
     // at the last release, with no error anywhere. These two strings are copied
     // from `EarlyQuotaResetMonitor.defaultsKeyPrefix` on feat/early-quota-reset
     // and `bankedResetFilename` in feat/codex-banked-resets.
+    // `EarlyQuotaResetMonitor` is @MainActor, so its static cannot initialise a
+    // nonisolated one; this is what keeps the two from drifting instead.
+    #expect(CodexResetForecastLocalEvents.earlyResetDefaultsKeyPrefix == EarlyQuotaResetMonitor.defaultsKeyPrefix)
     #expect(CodexResetForecastLocalEvents.earlyResetDefaultsKeyPrefix == "codeburn.quota.earlyReset.state.")
     #expect(CodexResetForecastLocalEvents.bankedResetFilename == "codex-banked-resets.json")
 }
@@ -769,16 +773,32 @@ private struct LocalEventSandbox {
     }
 }
 
-@Test func aStoreCarryingUnknownFieldsStillDecodesTheTwoWeNeed() {
-    // A newer version of either branch adding fields must not blind this loader.
+@Test func aStoreCarryingUnknownFieldsStillDecodes() {
+    // A newer version of either feature adding fields must not blind this
+    // loader: `Decodable` ignores keys it does not know.
     let sandbox = LocalEventSandbox("forward")
     sandbox.writeEarlyReset("""
-    {"schemaVersion":9,"latestEvent":{"providerID":"codex","detectedAt":1757687400,"newField":"x"},"extra":[1,2]}
+    {"announced":{},"windows":{},"planLabel":"Pro","schemaVersion":9,
+     "latestEvent":{"providerID":"codex","providerName":"Codex","windowKey":"primary",
+       "windowName":"5-hour limit","signal":"usageDropped","scheduledResetAt":1757692800,
+       "detectedAt":1757687400,"percentBefore":88,"percentAfter":2,"newField":"x"}}
     """, providerID: "codex")
     sandbox.writeBanked("""
-    {"baselineAt":"2025-09-04T15:33:20Z","credits":[{"id":"c","firstSeenAt":"2025-09-12T15:13:20Z","note":"x"}],"extra":1}
+    {"baselineAt":"2025-09-04T15:33:20Z","extra":1,
+     "credits":[{"id":"c","firstSeenAt":"2025-09-12T15:13:20Z","note":"x"}]}
     """)
     #expect(sandbox.load().count == 2)
+}
+
+@Test func aRecordMissingFieldsTheirTypesRequireIsNoOpinion() {
+    // The trade for decoding through their real types rather than through
+    // mirrors: a record that does not satisfy their shape is read as nothing at
+    // all, which is the safe direction. Drift becomes a compile error instead of
+    // a silent misread.
+    let sandbox = LocalEventSandbox("partial")
+    sandbox.writeEarlyReset(#"{"latestEvent":{"providerID":"codex","detectedAt":1757687400}}"#, providerID: "codex")
+    sandbox.writeBanked(#"{"credits":[{"id":"c"}]}"#)
+    #expect(sandbox.load().isEmpty)
 }
 
 @Test func aLocalResetNewerThanTheRecordMovesTheClockAndTheSentence() {

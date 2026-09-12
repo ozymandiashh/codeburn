@@ -11,31 +11,48 @@ import Foundation
 /// reset lands on this machine, CodeBurn learns of it within one quota refresh
 /// cycle, and that is the signal this loader carries into the forecast.
 ///
-/// It reads, and does not import. Neither #1320 nor #1322 is on `main`, so
-/// taking a code dependency on their types would make this branch unmergeable
-/// until they land. Instead the persisted records are decoded through private
-/// mirror types that carry only the two fields the forecast needs, and every
-/// failure — absent file, absent key, wrong shape, unreadable dates — is no
-/// opinion rather than an error. With neither feature installed the loader
-/// returns nothing and the forecast conditions on the global record exactly as
-/// it does today.
+/// It decodes through **their own `Codable` types**, so the two shapes cannot
+/// drift apart: if either branch changes its record, this stops compiling
+/// rather than silently reading nothing.
+///
+/// It still reads the stores by address rather than calling them, because
+/// neither exposes a read this can use:
+///
+/// - `CodexBankedResetStore.load()` is `async` and hard-wired to the real cache
+///   path, with nothing to inject. The forecast is evaluated synchronously, from
+///   view bodies.
+/// - `EarlyQuotaResetMonitor.visibleEvent(providerID:now:)` applies
+///   `EarlyQuotaResetNotice.visibleSeconds`, a twelve-hour *dock-visibility*
+///   window. A reset twenty hours ago is no longer worth a band in the dock and
+///   is still exactly what "since last reset" should count from, so that filter
+///   is wrong here.
+///
+/// Every failure — absent file, absent key, wrong shape, unreadable dates — is
+/// no opinion rather than an error. With neither feature ever having run, the
+/// loader returns nothing and the forecast conditions on the global record.
 ///
 /// The two stores are deliberately different in kind, because the two branches
 /// chose differently:
 ///
-/// - **#1320 (`feat/early-quota-reset`)** keeps one JSON record per provider in
-///   `UserDefaults`, under `codeburn.quota.earlyReset.state.<providerID>`, with
+/// - **#1320** keeps one JSON record per provider in `UserDefaults`, under
+///   `EarlyQuotaResetMonitor.defaultsKeyPrefix + providerID`, with
 ///   `dateEncodingStrategy = .secondsSince1970`. Not a file in the cache
 ///   directory. Only `latestEvent` is retained, which is exactly the one this
-///   needs: the most recent reset that branch announced.
-/// - **#1322 (`feat/codex-banked-resets`)** writes `codex-banked-resets.json` in
-///   the CodeBurn cache directory through `SafeFile`, with
-///   `dateEncodingStrategy = .iso8601`.
+///   needs: the most recent reset that feature announced.
+/// - **#1322** writes `codex-banked-resets.json` in the CodeBurn cache directory
+///   through `SafeFile`, with `dateEncodingStrategy = .iso8601`.
 enum CodexResetForecastLocalEvents {
-    /// #1320's `UserDefaults` key prefix. The provider id is appended.
+    /// #1320's `UserDefaults` key prefix, with the provider id appended.
+    ///
+    /// Spelled out rather than referenced because `EarlyQuotaResetMonitor` is
+    /// `@MainActor`, so its static is main-actor-isolated and cannot initialise
+    /// a nonisolated one — and this loader is deliberately callable from
+    /// anywhere. A test asserts the two are the same string, so drift fails
+    /// there instead of silently reading nothing.
     static let earlyResetDefaultsKeyPrefix = "codeburn.quota.earlyReset.state."
 
-    /// #1322's file in the CodeBurn cache directory.
+    /// #1322's file in the CodeBurn cache directory. Spelled out because that
+    /// branch's constant is `private`; a test pins the literal.
     static let bankedResetFilename = "codex-banked-resets.json"
 
     /// `CapacityDockProvider.codex.rawValue`. Spelled out rather than referenced
@@ -67,12 +84,12 @@ enum CodexResetForecastLocalEvents {
         guard let data = defaults.data(forKey: earlyResetDefaultsKeyPrefix + codexProviderID) else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .secondsSince1970
-        guard let state = try? decoder.decode(StoredEarlyResetState.self, from: data),
+        guard let state = try? decoder.decode(EarlyQuotaResetMonitor.ProviderState.self, from: data),
               let event = state.latestEvent,
               event.providerID == codexProviderID,
-              let detectedAt = event.detectedAt,
-              detectedAt.timeIntervalSince1970.isFinite
+              event.detectedAt.timeIntervalSince1970.isFinite
         else { return [] }
+        let detectedAt = event.detectedAt
         // `detectedAt`, not `scheduledResetAt`: the latter is when the cycle that
         // was cut short *would* have reset, which is in the future and is not
         // when anything happened.
@@ -93,35 +110,10 @@ enum CodexResetForecastLocalEvents {
               let data = try? SafeFile.read(from: path) else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let state = try? decoder.decode(StoredBankedResetState.self, from: data) else { return [] }
-        return (state.credits ?? []).compactMap { credit in
-            guard let seenAt = credit.firstSeenAt, seenAt.timeIntervalSince1970.isFinite else { return nil }
-            return .init(at: seenAt, origin: .bankedCredit)
+        guard let state = try? decoder.decode(CodexBankedResetState.self, from: data) else { return [] }
+        return state.credits.compactMap { credit in
+            guard credit.firstSeenAt.timeIntervalSince1970.isFinite else { return nil }
+            return .init(at: credit.firstSeenAt, origin: .bankedCredit)
         }
-    }
-
-    // MARK: - Mirror types
-    //
-    // Every field optional, so a record from a newer or older version of either
-    // branch decodes to whatever it can rather than failing whole. Unknown keys
-    // are ignored by `Decodable` already, which is what lets these carry two
-    // fields out of a record that holds a dozen.
-
-    private struct StoredEarlyResetState: Decodable {
-        struct StoredEvent: Decodable {
-            let providerID: String?
-            let detectedAt: Date?
-        }
-
-        let latestEvent: StoredEvent?
-    }
-
-    private struct StoredBankedResetState: Decodable {
-        struct StoredCredit: Decodable {
-            let id: String?
-            let firstSeenAt: Date?
-        }
-
-        let credits: [StoredCredit]?
     }
 }

@@ -19,6 +19,8 @@ import { formatCompact, formatUsd, setActiveCurrency } from './lib/format'
 import {
   EMPTY_FILTERS,
   filtersActive,
+  modelFilters,
+  projectFilters,
   unionFilters,
   type InvestigationFilters,
 } from './lib/investigation'
@@ -47,6 +49,7 @@ import { Models } from './sections/Models'
 import { INITIAL_VISIBLE, Sessions, type SessionSort } from './sections/Sessions'
 import { PullRequestsContent } from './sections/PullRequests'
 import { Compare } from './sections/Compare'
+import { PeriodCompare } from './sections/PeriodCompare'
 import { Plans } from './sections/Plans'
 import { Settings, type SettingsPane } from './sections/Settings'
 import { SpendContent } from './sections/Spend'
@@ -141,6 +144,7 @@ const SECTION_TITLES: Record<Section, string> = {
   optimize: 'Optimize',
   models: 'Models',
   compare: 'Compare',
+  periods: 'Compare periods',
   plans: 'Plans',
   settings: 'Settings',
   plugins: 'Plugins',
@@ -728,6 +732,20 @@ function AppMain() {
     trackEvent('section_view', { section: next })
   }, [commitNav])
 
+  /** Compare periods' contribution drill-down: the same Sessions destination
+   *  every other drill-through lands on, scoped to the clicked side's range
+   *  and filtered to the contribution's own key. Not a union: the range moves,
+   *  so any previous selection no longer describes this population. */
+  const inspectContribution = useCallback((range: DateRange, dimension: 'project' | 'model', key: string) => {
+    commitNav({
+      section: 'sessions',
+      range,
+      filters: dimension === 'project' ? projectFilters(key) : modelFilters([key]),
+      sessionId: null,
+      visibleCount: INITIAL_VISIBLE,
+    })
+  }, [commitNav])
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       // Back/Forward in app history: the platform navigation chords (Cmd+[ /
@@ -764,6 +782,7 @@ function AppMain() {
       else if (key === '5') navigate('optimize')
       else if (key === '6') navigate('models')
       else if (key === '7') navigate('compare')
+      else if (key === '9') navigate('periods')
       else if (key === '8') navigate('plans')
       else if (key === ',') navigate('settings')
       else if (key === 'r') refreshVisible()
@@ -924,7 +943,9 @@ function AppMain() {
               ) : section === 'models' ? (
                 <Models period={period} provider={provider} range={customRange} refreshToken={refreshToken} onNavigate={navigate} onInvestigate={investigate} ready={ready} />
               ) : section === 'compare' ? (
-                <Compare period={period} provider={provider} range={customRange} refreshToken={refreshToken} ready={ready} />
+                <Compare period={period} provider={provider} range={customRange} refreshToken={refreshToken} ready={ready} onInvestigate={investigate} />
+              ) : section === 'periods' ? (
+                <PeriodCompare provider={provider} refreshToken={refreshToken} ready={ready} onInspectContribution={inspectContribution} />
               ) : (
                 <SectionPlaceholder title={SECTION_TITLES[section]} />
               )}
@@ -935,7 +956,7 @@ function AppMain() {
         {section !== 'settings' && (
           <Hint
             items={[
-              { k: shortcutLabel('1-8'), label: 'Navigate' },
+              { k: shortcutLabel('1-8,9'), label: 'Navigate' },
               { k: shortcutLabel(','), label: 'Settings' },
               { k: shortcutLabel('R'), label: 'Refresh' },
             ]}

@@ -213,7 +213,7 @@ Off by default, and the only quota notice in CodeBurn that is. The others report
 something that already happened; this one reports a probability, and a
 probability that arrives uninvited is a worse trade.
 
-Settings → General → Codex Reset Forecast turns it on and picks a threshold
+Settings → General → Notifications turns it on and picks a threshold
 (default: a 50% chance within six hours). It fires at most once per crossing and
 re-arms only when the estimate falls back under the threshold, so it cannot nag.
 The fired state is persisted, so relaunching does not repeat it. Moving the

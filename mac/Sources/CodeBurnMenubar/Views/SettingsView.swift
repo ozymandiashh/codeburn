@@ -391,8 +391,14 @@ private struct GeneralSettingsTab: View {
     @AppStorage(UpdateNotificationPreference.defaultsKey)
     private var notifyAboutUpdates: Bool = true
 
-    // Off by default, unlike every other notification here: this one reports a
-    // probability rather than something that already happened.
+    @AppStorage(CodexBankedResetNotificationPreference.defaultsKey)
+    private var notifyAboutBankedResets: Bool = true
+
+    @AppStorage(EarlyQuotaResetPreference.defaultsKey)
+    private var notifyAboutEarlyResets: Bool = true
+
+    // Off by default, unlike every other notification here: the others report
+    // something that already happened, this one reports a probability.
     @AppStorage(CodexResetForecastNotificationPreference.defaultsKey)
     private var notifyAboutResetForecast: Bool = false
 
@@ -512,14 +518,19 @@ private struct GeneralSettingsTab: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Updates") {
+            Section("Notifications") {
                 Toggle("Notify me about updates", isOn: $notifyAboutUpdates)
                 Text("Posts a notification when a new CodeBurn release is available. Click it to install.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-            }
-
-            Section("Codex Reset Forecast") {
+                Toggle("Notify me when Codex banks a limit reset", isOn: $notifyAboutBankedResets)
+                Text("OpenAI sometimes grants Codex accounts a credit that resets a rate-limit window early. CodeBurn reads these from the quota response it already fetches and tells you once per grant. It never spends one.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Toggle("Notify me when a quota resets early", isOn: $notifyAboutEarlyResets)
+                Text("Posts a notification when a provider resets a usage limit before its scheduled time, so you know the capacity is back. The Capacity Dock shows the same notice for 12 hours either way.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
                 Toggle("Notify me when a Codex reset looks likely", isOn: $notifyAboutResetForecast)
                 Picker("Notify at", selection: $resetForecastThreshold) {
                     ForEach(CodexResetForecastThresholdPreference.choices, id: \.self) { choice in
@@ -527,7 +538,7 @@ private struct GeneralSettingsTab: View {
                     }
                 }
                 .disabled(!notifyAboutResetForecast)
-                Text("CodeBurn estimates the chance of OpenAI resetting Codex usage limits from the public record of past resets that ships with the app. This is a statistical estimate, never an announcement, and it is often wrong. Nothing is fetched at runtime, nothing is spent, and the notice never acts on its own. You get at most one notice per crossing; it re-arms when the estimate falls back under your threshold.")
+                Text("CodeBurn estimates the chance of OpenAI resetting Codex usage limits from the public record of past resets that ships with the app. This is a statistical estimate, never an announcement, and it is often wrong. Nothing is spent and the notice never acts on its own. You get at most one notice per crossing; it re-arms when the estimate falls back under your threshold.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }

@@ -2184,15 +2184,17 @@ private struct CodexPlanInsight: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            // Limit-reset credits the account is holding. Hidden at zero so
-            // plans that never receive these grants see no extra row.
-            if let resets = usage.resetCredits, resets.availableCount > 0 {
+            // Limit-reset credits the account is holding, including the banked
+            // ones OpenAI grants out of band. Hidden at zero so plans that never
+            // receive these grants see no extra row.
+            if let resets = usage.resetCredits,
+               let detail = CodexBankedResetPresentation.detail(resets, now: Date()) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("Limit resets")
+                    Text(CodexBankedResetPresentation.rowLabel)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(resetCreditsLabel(resets))
+                    Text(detail)
                         .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
                 }
@@ -2264,12 +2266,6 @@ private struct CodexPlanInsight: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    private func resetCreditsLabel(_ resets: CodexUsage.ResetCredits) -> String {
-        let count = "\(resets.availableCount) available"
-        guard let next = resets.nextExpiresAt else { return count }
-        return "\(count) · next expires \(relativeReset(next))"
     }
 
     private func relativeReset(_ date: Date) -> String {

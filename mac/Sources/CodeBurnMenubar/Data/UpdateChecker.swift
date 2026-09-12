@@ -182,6 +182,10 @@ final class UpdateChecker {
         }
     }
 
+    /// Marks the notifications a tap should install an update from. Other
+    /// posters share the notification delegate.
+    nonisolated static let notificationIdentifierPrefix = "UpdateChecker."
+
     /// Posts at most one notification per new version pair; the 2-day repoll
     /// finds the same pair stamped and stays quiet.
     func notifyIfUpdateAvailable(appVersion: String?, cliVersion: String?) async {
@@ -192,7 +196,7 @@ final class UpdateChecker {
         let notifier = notifier ?? makeNotifier()
         self.notifier = notifier
         guard await notifier.requestAuthorizationIfNeeded() else { return }
-        notifier.post(title: copy.title, body: copy.body, identifier: "UpdateChecker.\(stamp)")
+        notifier.post(title: copy.title, body: copy.body, identifier: "\(Self.notificationIdentifierPrefix)\(stamp)")
         defaults.set(stamp, forKey: lastNotifiedVersionsKey)
     }
 

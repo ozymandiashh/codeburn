@@ -723,6 +723,194 @@ export type CompareJsonReport = {
   workingStyle: WorkingStyleRow[]
 }
 
+// ————— src/compare-cohorts.ts (compare --format cohort-json) —————
+// Mirrors the core contracts 1:1. The renderer never imports the Node engine,
+// so these hand copies ARE the IPC types; tests on both sides pin the same
+// percentile convention ([1,2,4,8] → median 3, P90 6.8).
+
+/** One observation = one edit turn whose behavioral calls carry exactly one
+ *  model. `costUSD` is that model's own recorded cost in the turn (never
+ *  another model's, never the session total). */
+export type CohortObservation = {
+  sessionId: string
+  provider: string
+  project: string
+  timestamp: string
+  category: string
+  model: string
+  costUSD: number
+  /** False when costUSD is 0 on a model the pricing rules do not declare free
+   *  — a pricing gap, never displayed as a real $0 observation. */
+  costKnown: boolean
+  retries: number
+  oneShot: boolean
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  /** input + cache-read tokens: an explicit PROXY for context size, never a
+   *  measured context window. */
+  contextProxyTokens: number
+  /** False when the turn's calls report no tokens at all; volume bands must
+   *  exclude and count these, never read them as small. */
+  tokensReported: boolean
+}
+
+export type CohortVolumeStats = {
+  outputMedian: number | null
+  outputP90: number | null
+  inputMedian: number | null
+  inputP90: number | null
+  contextProxyMedian: number | null
+  contextProxyP90: number | null
+  missingMeasureCount: number
+}
+
+export type CohortStats = {
+  model: string
+  label: string
+  /** Declared population the rates below divide by (selection filters, plus a
+   *  volume band when one is active). */
+  observationCount: number
+  distinctSessionCount: number
+  retryCount: number
+  retryRate: number | null
+  oneShotCount: number
+  oneShotRate: number | null
+  costKnownCount: number
+  unknownCostCount: number
+  costMedian: number | null
+  costP90: number | null
+  costMean: number | null
+  costHistogram: { edges: number[]; counts: number[] }
+  volume: CohortVolumeStats
+}
+
+export type CohortModelReport = {
+  model: string
+  label: string
+  stats: CohortStats
+  /** The declared population itself: every statistic is reproducible from it. */
+  observations: CohortObservation[]
+  exclusions: {
+    multiModelTurnCount: number
+    combinedMultiModelCostUSD: number
+    noBehavioralModelTurns: number
+  }
+}
+
+export type CohortComparisonReport = {
+  kind: 'cohort-comparison'
+  period: { label: string; provider: string }
+  selection: { projects: string[]; category: string | null; from: string | null; to: string | null }
+  conventions: {
+    percentile: string
+    contextProxy: string
+    attribution: string
+  }
+  modelA: CohortModelReport
+  modelB: CohortModelReport
+}
+
+export type CohortFacets = {
+  kind: 'cohort-facets'
+  models: ModelStats[]
+  projects: Array<{ id: string; project: string; projectPath: string; sessions: number; costUSD: number }>
+  categories: Array<{ id: string; label: string }>
+}
+// ---- Compare periods (period-diff; B minus A, A is the reference) ----
+// Mirrors the JSON emitted by `codeburn compare-periods --format json`
+// (src/period-diff.ts). Raw (unrounded) numbers; the UI formats.
+
+export type PeriodRangeInfo = { from: string; to: string; days: number }
+
+export type PeriodContribution = {
+  key: string
+  costA: number
+  costB: number
+  diff: number
+  /** diff / |costA| x 100; null when costA is 0 (the row is `new`). */
+  pct: number | null
+  status: 'new' | 'gone' | 'up' | 'down' | 'flat'
+  callsA: number
+  callsB: number
+}
+
+export type PeriodTotalsRow = {
+  cost: number
+  calls: number
+  sessions: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  savingsUSD: number
+  estimatedCostUSD: number
+}
+
+export type PeriodTotalsDiff = {
+  A: PeriodTotalsRow
+  B: PeriodTotalsRow
+  diff: PeriodTotalsRow
+  pct: Record<keyof PeriodTotalsRow, number | null>
+}
+
+export type NormalizedMetric = { a: number | null; b: number | null; diff: number | null; pct: number | null }
+
+export type AggregateDayRow = { date: string; historyCost: number; detailCost: number; aggregateOnly: number }
+
+export type PeriodHistoryBasis = {
+  historyCost: { A: number; B: number }
+  detailCost: { A: number; B: number }
+  days: { A: AggregateDayRow[]; B: AggregateDayRow[] }
+  aggregateOnly: { A: number; B: number }
+  basis: string
+}
+
+export type PeriodDiffReport = {
+  schema: 1
+  provider: string
+  rangeA: PeriodRangeInfo
+  rangeB: PeriodRangeInfo
+  overlapDays: number
+  durationDeltaDays: number
+  totals: PeriodTotalsDiff
+  projects: PeriodContribution[]
+  models: PeriodContribution[]
+  normalized: {
+    perDay: NormalizedMetric
+    per100Calls: NormalizedMetric
+    denominators: { perDay: string; per100Calls: string }
+  }
+  coverage: {
+    unpricedModelsA: Array<{ model: string; calls: number }>
+    unpricedModelsB: Array<{ model: string; calls: number }>
+    pricingCoverageA: number | null
+    pricingCoverageB: number | null
+  }
+  history?: PeriodHistoryBasis
+}
+
+export type PeriodSessionDiff = {
+  dimension: 'project' | 'model'
+  key: string
+  provider: string
+  rangeA: PeriodRangeInfo
+  rangeB: PeriodRangeInfo
+  sessions: Array<{
+    identity: string
+    provider: string
+    sessionId: string
+    project: string
+    title?: string
+    costA: number
+    costB: number
+    diff: number
+    callsA: number
+    callsB: number
+  }>
+}
+
 // ————— src/models.ts + src/audit-report.ts (audit --format json) —————
 
 /** Per-token rates used for pricing (src/models.ts ModelCosts). */
@@ -890,6 +1078,14 @@ export interface CodeburnBridge {
   getSessionsContributions(period: Period, provider: string, range?: DateRange, background?: boolean): Promise<SessionDrillRow[]>
   getCompareModels(period: Period, provider: string, background?: boolean): Promise<ModelStats[]>
   getCompare(period: Period, provider: string, modelA: string, modelB: string): Promise<CompareJsonReport>
+  /** Cohort mode facets: models, canonical projects, activity categories. */
+  getCompareCohortModels(period: Period, provider: string, range?: DateRange, background?: boolean): Promise<CohortFacets>
+  /** Cohort mode report; projects contains exact ids from CohortFacets. */
+  getCompareCohort(period: Period, provider: string, modelA: string, modelB: string, range?: DateRange, projects?: string[], category?: string, background?: boolean): Promise<CohortComparisonReport>
+  /** Compare periods (B minus A). Both ranges are required local YYYY-MM-DD keys. */
+  getPeriodCompare(rangeA: DateRange, rangeB: DateRange, provider: string, background?: boolean): Promise<PeriodDiffReport>
+  /** Sessions behind one project/model contribution, joined across A and B. */
+  getPeriodCompareSessions(rangeA: DateRange, rangeB: DateRange, provider: string, dimension: 'project' | 'model', key: string): Promise<PeriodSessionDiff>
   getYield(period: Period, provider: string, range?: DateRange, background?: boolean): Promise<YieldJsonReport>
   getSpendFlow(period: Period, provider: string, range?: DateRange, background?: boolean): Promise<SpendFlow>
   /** Spend per canonical project × branch (`spend --format branch-json`). */
