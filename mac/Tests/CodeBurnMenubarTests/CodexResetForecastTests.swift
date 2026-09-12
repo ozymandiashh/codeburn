@@ -312,7 +312,7 @@ private enum DaytimeFixture {
     #expect(reading.lastResetSource == .local)
     #expect(abs(reading.hoursSinceLastReset - 4) < 1e-6)
     #expect(CodexResetForecastPresentation.lines(for: .available(reading))[0]
-        .contains("since the last reset on this machine"))
+        .contains("since the reset observed on this machine at "))
 }
 
 @Test func aLocalResetOlderThanTheGlobalRecordIsIgnored() {
@@ -598,4 +598,225 @@ private func evaluate(
     #expect(!copy.body.lowercased().contains("expect"))
     #expect(!copy.body.lowercased().contains("tap"))
     #expect(!copy.body.lowercased().contains("click"))
+}
+
+// MARK: - Local events, read off the sibling features' stores
+//
+// The JSON below is the verbatim output of those two branches' own encoders.
+// It was produced by compiling `EarlyQuotaResetReading`/`EarlyQuotaResetEvent`
+// from `feat/early-quota-reset`'s `EarlyQuotaReset.swift` and the
+// `ProviderState` declaration from its `EarlyQuotaResetMonitor.swift`, and
+// `CodexBankedResetState` from `feat/codex-banked-resets`'s
+// `CodexBankedResets.swift`, then encoding with the same `JSONEncoder` settings
+// each branch's store uses (`.secondsSince1970` for #1320's `UserDefaults`
+// record, `.iso8601` for #1322's `codex-banked-resets.json`). Neither type is
+// imported: this branch reads these records, it does not depend on them.
+
+private enum LocalEventFixture {
+    /// detectedAt 1757687400 = 2026-09-12T14:30:00Z
+    static let codexEarlyReset = """
+    {
+      "announced" : { "primary" : [ 1757692800 ] },
+      "latestEvent" : {
+        "detectedAt" : 1757687400,
+        "percentAfter" : 2,
+        "percentBefore" : 88,
+        "providerID" : "codex",
+        "providerName" : "Codex",
+        "scheduledResetAt" : 1757692800,
+        "signal" : "usageDropped",
+        "windowKey" : "primary",
+        "windowName" : "5-hour limit"
+      },
+      "planLabel" : "Pro",
+      "windows" : { "primary" : { "observedAt" : 1757687400, "percent" : 2, "resetsAt" : 1757705400 } }
+    }
+    """
+
+    /// The same record for Anthropic. Must never move the Codex clock.
+    static let claudeEarlyReset = """
+    {
+      "announced" : { "seven_day" : [ 1757779200 ] },
+      "latestEvent" : {
+        "detectedAt" : 1757773800,
+        "percentAfter" : 0,
+        "percentBefore" : 74,
+        "providerID" : "claude",
+        "providerName" : "Claude",
+        "scheduledResetAt" : 1757779200,
+        "signal" : "resetMovedForward",
+        "windowKey" : "seven_day",
+        "windowName" : "weekly limit"
+      },
+      "planLabel" : "Max 20x",
+      "windows" : { "seven_day" : { "observedAt" : 1757687400, "percent" : 2, "resetsAt" : 1757705400 } }
+    }
+    """
+
+    /// A first observation: state, but no event yet.
+    static let baselineOnly = """
+    {
+      "announced" : { },
+      "planLabel" : "Pro",
+      "windows" : { "primary" : { "observedAt" : 1757687400, "percent" : 2, "resetsAt" : 1757705400 } }
+    }
+    """
+
+    /// firstSeenAt 1757600000 and 1757690000.
+    static let bankedCredits = """
+    {
+      "baselineAt" : "2025-09-04T15:33:20Z",
+      "credits" : [
+        { "firstSeenAt" : "2025-09-11T14:13:20Z", "id" : "credit-a" },
+        { "firstSeenAt" : "2025-09-12T15:13:20Z", "id" : "credit-b" }
+      ]
+    }
+    """
+
+    static let detectedAt = Date(timeIntervalSince1970: 1_757_687_400)
+    static let newestCredit = Date(timeIntervalSince1970: 1_757_690_000)
+}
+
+/// An isolated defaults suite and an empty cache directory per test, so nothing
+/// here can read or write the developer's real state.
+private struct LocalEventSandbox {
+    let defaults: UserDefaults
+    let cacheDir: String
+    private let suite: String
+
+    init(_ name: String) {
+        suite = "codeburn.tests.localEvents.\(name)"
+        defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        cacheDir = NSTemporaryDirectory() + "codeburn-local-events-\(name)-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: cacheDir, withIntermediateDirectories: true)
+    }
+
+    func writeEarlyReset(_ json: String, providerID: String) {
+        defaults.set(Data(json.utf8), forKey: CodexResetForecastLocalEvents.earlyResetDefaultsKeyPrefix + providerID)
+    }
+
+    func writeBanked(_ json: String) {
+        try? Data(json.utf8).write(to: URL(fileURLWithPath:
+            (cacheDir as NSString).appendingPathComponent(CodexResetForecastLocalEvents.bankedResetFilename)))
+    }
+
+    func load() -> [CodexResetForecast.LocalResetEvent] {
+        CodexResetForecastLocalEvents.load(cacheDir: cacheDir, defaults: defaults)
+    }
+}
+
+@Test func theLoaderReadsTheExactStoresTheSiblingBranchesWriteTo() {
+    // Literal, not symbolic: a typo in either address means the loader silently
+    // reads nothing and the last-reset clock quietly goes back to being frozen
+    // at the last release, with no error anywhere. These two strings are copied
+    // from `EarlyQuotaResetMonitor.defaultsKeyPrefix` on feat/early-quota-reset
+    // and `bankedResetFilename` in feat/codex-banked-resets.
+    #expect(CodexResetForecastLocalEvents.earlyResetDefaultsKeyPrefix == "codeburn.quota.earlyReset.state.")
+    #expect(CodexResetForecastLocalEvents.bankedResetFilename == "codex-banked-resets.json")
+}
+
+@Test func theLoaderUsesTheCodexProviderIdTheRestOfTheAppUses() {
+    #expect(CodexResetForecastLocalEvents.codexProviderID == CapacityDockProvider.codex.rawValue)
+}
+
+@Test func withNeitherStorePresentTheLoaderReturnsNothing() {
+    #expect(LocalEventSandbox("absent").load().isEmpty)
+}
+
+@Test func aCodexEarlyResetBecomesALocalEventAtItsDetectionTime() {
+    let sandbox = LocalEventSandbox("early")
+    sandbox.writeEarlyReset(LocalEventFixture.codexEarlyReset, providerID: "codex")
+    let events = sandbox.load()
+    #expect(events.count == 1)
+    #expect(events.first?.origin == .localEarlyReset)
+    // detectedAt, not scheduledResetAt: the latter is when the cut-short cycle
+    // would have reset, which is in the future and is not when anything happened.
+    #expect(events.first?.at == LocalEventFixture.detectedAt)
+}
+
+@Test func anAnthropicEarlyResetNeverMovesTheCodexClock() {
+    let sandbox = LocalEventSandbox("claude")
+    // Both the wrong key and, belt and braces, the right key holding a record
+    // that names another provider.
+    sandbox.writeEarlyReset(LocalEventFixture.claudeEarlyReset, providerID: "claude")
+    #expect(sandbox.load().isEmpty)
+    sandbox.writeEarlyReset(LocalEventFixture.claudeEarlyReset, providerID: "codex")
+    #expect(sandbox.load().isEmpty)
+}
+
+@Test func aFirstObservationWithNoEventYetIsNoOpinion() {
+    let sandbox = LocalEventSandbox("baseline")
+    sandbox.writeEarlyReset(LocalEventFixture.baselineOnly, providerID: "codex")
+    #expect(sandbox.load().isEmpty)
+}
+
+@Test func bankedCreditsBecomeLocalEventsAtTheirFirstSeenTime() {
+    let sandbox = LocalEventSandbox("banked")
+    sandbox.writeBanked(LocalEventFixture.bankedCredits)
+    let events = sandbox.load()
+    #expect(events.count == 2)
+    #expect(events.allSatisfy { $0.origin == .bankedCredit })
+    #expect(events.map(\.at).max() == LocalEventFixture.newestCredit)
+}
+
+@Test func aMalformedStoreIsNoOpinionRatherThanAnError() {
+    for junk in ["", "{", "null", "[]", "{\"latestEvent\":\"nope\"}", "{\"credits\":\"nope\"}"] {
+        let sandbox = LocalEventSandbox("junk\(abs(junk.hashValue))")
+        sandbox.writeEarlyReset(junk, providerID: "codex")
+        sandbox.writeBanked(junk)
+        #expect(sandbox.load().isEmpty)
+    }
+}
+
+@Test func aStoreCarryingUnknownFieldsStillDecodesTheTwoWeNeed() {
+    // A newer version of either branch adding fields must not blind this loader.
+    let sandbox = LocalEventSandbox("forward")
+    sandbox.writeEarlyReset("""
+    {"schemaVersion":9,"latestEvent":{"providerID":"codex","detectedAt":1757687400,"newField":"x"},"extra":[1,2]}
+    """, providerID: "codex")
+    sandbox.writeBanked("""
+    {"baselineAt":"2025-09-04T15:33:20Z","credits":[{"id":"c","firstSeenAt":"2025-09-12T15:13:20Z","note":"x"}],"extra":1}
+    """)
+    #expect(sandbox.load().count == 2)
+}
+
+@Test func aLocalResetNewerThanTheRecordMovesTheClockAndTheSentence() {
+    let times = Fixture.times()
+    let now = times[times.count - 1].addingTimeInterval(40 * 3600)
+    let local = [CodexResetForecast.LocalResetEvent(
+        at: times[times.count - 1].addingTimeInterval(36 * 3600), origin: .localEarlyReset
+    )]
+    guard case let .available(reading) = CodexResetForecast.evaluate(
+        history: Fixture.standard, now: now, localEvents: local
+    ) else { Issue.record("expected a forecast"); return }
+    #expect(reading.lastResetSource == .local)
+    #expect(abs(reading.hoursSinceLastReset - 4) < 1e-6)
+    let expected = "since the reset observed on this machine at "
+        + CodexResetForecastPresentation.localClock(local[0].at)
+    #expect(CodexResetForecastPresentation.lines(for: .available(reading))[0].contains(expected))
+}
+
+@Test func aLocalResetOlderThanTheRecordLeavesTheSentenceGlobal() {
+    let times = Fixture.times()
+    let now = times[times.count - 1].addingTimeInterval(40 * 3600)
+    let local = [CodexResetForecast.LocalResetEvent(
+        at: times[times.count - 1].addingTimeInterval(-10 * 3600), origin: .bankedCredit
+    )]
+    guard case let .available(reading) = CodexResetForecast.evaluate(
+        history: Fixture.standard, now: now, localEvents: local
+    ) else { Issue.record("expected a forecast"); return }
+    #expect(reading.lastResetSource == .global)
+    #expect(CodexResetForecastPresentation.lines(for: .available(reading))[0]
+        .contains("since the last global reset"))
+}
+
+@Test func theLocalClockIsZeroPadded() {
+    var components = DateComponents()
+    components.year = 2026; components.month = 9; components.day = 12
+    components.hour = 4; components.minute = 5
+    let early = Calendar.current.date(from: components)!
+    #expect(CodexResetForecastPresentation.localClock(early) == "04:05")
+    components.hour = 14; components.minute = 30
+    #expect(CodexResetForecastPresentation.localClock(Calendar.current.date(from: components)!) == "14:30")
 }

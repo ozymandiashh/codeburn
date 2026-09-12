@@ -243,6 +243,13 @@ final class AppStore {
     /// The clock the forecast is evaluated against. Overridden in tests so the
     /// probabilities a fixture produces are deterministic.
     @ObservationIgnored var codexResetForecastClock: @Sendable () -> Date = { Date() }
+    /// Resets this machine saw for itself, read off the stores #1320 and #1322
+    /// persist. Injectable so tests never touch the real defaults suite or the
+    /// cache directory, and so a test can prove the forecast falls back to the
+    /// global record when there are none.
+    @ObservationIgnored var codexResetForecastLocalEventLoader: @Sendable () -> [CodexResetForecast.LocalResetEvent] = {
+        CodexResetForecastLocalEvents.load()
+    }
     @ObservationIgnored var capacityDockCredentialLoader:
         @Sendable (String) async throws -> CapacityDockProviderCredential = {
             try await CapacityDockProviderCredentialStore.loadAsync(for: $0)
@@ -2684,16 +2691,22 @@ final class AppStore {
         )
     }
 
-    /// The Codex reset forecast for this moment, over the bundled record.
-    /// Local resets this machine observed for itself would be passed here; the
+    /// The Codex reset forecast for this moment.
+    ///
+    /// The distribution of waits comes from the bundled record, which is stale
+    /// by a release cycle and does not need to be fresher: 44 waits do not
+    /// change shape in a week. The *last-reset clock* is the input that must be
+    /// live, and it is: `CodexResetForecastLocalEvents` reads what the
     /// early-quota-reset detector (#1320) and the banked-credit watcher (#1322)
-    /// are the intended sources, and with none the forecast conditions on the
-    /// global record, which is what it does today.
-    func codexResetForecast(localEvents: [CodexResetForecast.LocalResetEvent] = []) -> CodexResetForecast.Result {
+    /// persist, so a reset that lands on this machine moves the clock within one
+    /// quota refresh cycle instead of waiting for the next release. With neither
+    /// feature installed the loader returns nothing and the forecast conditions
+    /// on the global record, exactly as before.
+    func codexResetForecast(localEvents: [CodexResetForecast.LocalResetEvent]? = nil) -> CodexResetForecast.Result {
         CodexResetForecast.evaluate(
             history: CodexResetForecast.bundled,
             now: codexResetForecastClock(),
-            localEvents: localEvents
+            localEvents: localEvents ?? codexResetForecastLocalEventLoader()
         )
     }
 

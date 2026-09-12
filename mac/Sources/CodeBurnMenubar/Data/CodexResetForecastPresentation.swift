@@ -27,6 +27,17 @@ enum CodexResetForecastPresentation {
         "(\(Int((CodexResetForecast.clamp01(range.low) * 100).rounded())) to \(percent(range.high)))"
     }
 
+    /// "14:30" in the reader's own time zone. Used only to say when a reset
+    /// this machine observed was seen, which is a wall-clock fact about this
+    /// machine. Hand-formatted rather than `DateFormatter` so it comes out
+    /// character-identical to the TypeScript side in every locale.
+    static func localClock(_ at: Date) -> String {
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: at)
+        let hour = String(format: "%02d", parts.hour ?? 0)
+        let minute = String(format: "%02d", parts.minute ?? 0)
+        return "\(hour):\(minute)"
+    }
+
     /// "45m", "12h", "2.2d". Compact on purpose: this sits inside a sentence.
     static func duration(hours: Double) -> String {
         guard hours.isFinite, hours >= 0 else { return "0m" }
@@ -45,13 +56,15 @@ enum CodexResetForecastPresentation {
             guard case let .unavailable(reason, _) = result else { return [] }
             return ["Reset forecast: unavailable. \(reason)"]
         }
-        let since = reading.lastResetSource == .local ? "reset on this machine" : "global reset"
+        let since = reading.lastResetSource == .local
+            ? "reset observed on this machine at \(localClock(reading.lastResetAt))"
+            : "last global reset"
         let headline = "Reset forecast: "
             + "\(percent(reading.within24h.point)) chance in the next 24h "
             + "\(range(reading.within24h)), "
             + "\(percent(reading.within6h.point)) in 6h "
             + "\(range(reading.within6h)). "
-            + "\(duration(hours: reading.hoursSinceLastReset)) since the last \(since); "
+            + "\(duration(hours: reading.hoursSinceLastReset)) since the \(since); "
             + "typical wait \(duration(hours: reading.typicalWaitHours)). "
             + "Working hours in SF: \(reading.workingHoursSF ? "yes" : "no")."
 
@@ -70,10 +83,12 @@ enum CodexResetForecastPresentation {
     /// never asks the reader to do anything: no action buttons, no deep link,
     /// nothing spent, nothing redeemed, nothing refreshed.
     static func notice(for reading: CodexResetForecast.Reading) -> (title: String, body: String) {
-        let since = reading.lastResetSource == .local ? "reset on this machine" : "global reset"
+        let since = reading.lastResetSource == .local
+            ? "reset observed on this machine at \(localClock(reading.lastResetAt))"
+            : "last global reset"
         let body = "A statistical estimate from public reset history, not an announcement from OpenAI. "
             + "\(percent(reading.within6h.point)) chance \(range(reading.within6h)) of a Codex limit reset in the next 6h. "
-            + "\(duration(hours: reading.hoursSinceLastReset)) since the last \(since). "
+            + "\(duration(hours: reading.hoursSinceLastReset)) since the \(since). "
             + "Nothing has reset yet and nothing was changed."
         return ("Codex reset forecast", body)
     }

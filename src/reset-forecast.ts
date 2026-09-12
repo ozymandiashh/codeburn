@@ -530,6 +530,14 @@ export function formatForecastRange(range: ProbabilityRange): string {
   return `(${Math.round(clamp01(range.low) * 100)} to ${formatForecastPercent(range.high)})`
 }
 
+/** "14:30" in the reader's own time zone. Used only to say when a reset this
+ *  machine observed was seen, which is a wall-clock fact about this machine. */
+export function formatLocalClock(at: Date): string {
+  const hours = String(at.getHours()).padStart(2, '0')
+  const minutes = String(at.getMinutes()).padStart(2, '0')
+  return `${hours}:${minutes}`
+}
+
 /** "45m", "12h", "2.2d". Compact on purpose: this sits inside a sentence. */
 export function formatForecastDuration(hours: number): string {
   if (!Number.isFinite(hours) || hours < 0) return '0m'
@@ -552,8 +560,11 @@ export function renderForecastLines(result: ResetForecastResult): string[] {
     + `${formatForecastRange(within24h)}, `
     + `${formatForecastPercent(within6h.point)} in 6h `
     + `${formatForecastRange(within6h)}. `
-    + `${formatForecastDuration(result.hoursSinceLastReset)} since the last `
-    + `${result.lastResetSource === 'local' ? 'reset on this machine' : 'global reset'}; `
+    + `${formatForecastDuration(result.hoursSinceLastReset)} since the `
+    + (result.lastResetSource === 'local'
+      ? `reset observed on this machine at ${formatLocalClock(new Date(result.lastResetAt))}`
+      : 'last global reset')
+    + '; '
     + `typical wait ${formatForecastDuration(result.typicalWaitHours)}. `
     + `Working hours in SF: ${result.workingHoursSF ? 'yes' : 'no'}.`
 

@@ -5,6 +5,7 @@ import {
   formatForecastDuration,
   formatForecastPercent,
   formatForecastRange,
+  formatLocalClock,
   isWorkingHoursSF,
   MIN_HOUR_MULTIPLIER,
   MAX_PROBABILITY,
@@ -323,7 +324,9 @@ describe('this machine\'s own resets', () => {
     const result = available(forecastReset({ history: history(times), now, localEvents: local }))
     expect(result.lastResetSource).toBe('local')
     expect(result.hoursSinceLastReset).toBeCloseTo(4, 6)
-    expect(renderForecastLines(result)[0]).toContain('since the last reset on this machine')
+    const at = new Date(Date.parse(local[0].at))
+    expect(renderForecastLines(result)[0])
+      .toContain(`since the reset observed on this machine at ${formatLocalClock(at)}`)
   })
 
   it('ignores a local event older than the global record', () => {
@@ -354,6 +357,11 @@ describe('wording', () => {
     expect(lines[0]).toMatch(
       /^Reset forecast: \d+% chance in the next 24h \(\d+ to \d+%\), \d+% in 6h \(\d+ to \d+%\)\. \S+ since the last global reset; typical wait \S+\. Working hours in SF: (yes|no)\.$/,
     )
+  })
+
+  it('zero-pads the local clock', () => {
+    expect(formatLocalClock(new Date(2026, 8, 12, 4, 5))).toBe('04:05')
+    expect(formatLocalClock(new Date(2026, 8, 12, 14, 30))).toBe('14:30')
   })
 
   it('carries a range beside every probability it prints', () => {

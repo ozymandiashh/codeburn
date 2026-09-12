@@ -133,15 +133,52 @@ Because the prior can lift a six-hour window more than the 24-hour window that
 contains it, the 24-hour figure is raised to at least the six-hour one. A longer
 horizon is never reported as less likely than a shorter one inside it.
 
-### 4. Your own resets
+### 4. Your own resets, and why they matter more than the record's freshness
 
-When this machine has observed a reset for itself — the local early-reset
-detector (#1320) or a banked-credit grant (#1322) — and that observation is more
-recent than the newest reset in the public record, "since last reset" counts from
-yours, and the sentence says "since the last reset on this machine". This is an
-*input* to the model, not an import: neither feature has to land before the
-forecast works, and with no local events the forecast conditions on the global
-record exactly as it does today.
+Two different inputs, with two very different freshness requirements.
+
+The **distribution of waits** comes from the bundled record, which is stale by a
+release cycle: the Action opens a pull request, somebody merges it, a release is
+cut, you update. That is fine. 44 waits do not change shape in a week, and a
+median of 3.6 days does not move because the file is four days old.
+
+The **last-reset clock** is the model's other input, and it must not be frozen at
+the last release — a forecast that still thinks the last reset was six days ago
+when one landed this morning is not slightly wrong, it is wrong in the direction
+that matters. The public trackers learn of a reset within about two minutes.
+CodeBurn learns of it within **one quota refresh cycle**, from this machine's own
+signals:
+
+| Source | What it means | How it reaches the forecast |
+| --- | --- | --- |
+| Early-reset detector (#1320) | a Codex window emptied or rolled to a new cycle early — which is what a global goodwill reset looks like from inside your account | `codeburn.quota.earlyReset.state.codex` in `UserDefaults`, `latestEvent.detectedAt` |
+| Banked credits (#1322) | OpenAI granted this account a reset credit | `codex-banked-resets.json` in the CodeBurn cache directory, each credit's `firstSeenAt` |
+
+`CodexResetForecastLocalEvents` reads both, and **reads rather than imports**.
+Neither feature is on `main`, so a code dependency would make this unmergeable
+until they land; instead the persisted records are decoded through private mirror
+types carrying only the two fields the forecast needs. A missing file, a missing
+key, a wrong shape or an unreadable date is no opinion, never an error. With
+neither feature installed the loader returns nothing and the forecast conditions
+on the global record exactly as before.
+
+When a local event is newer than the record, "since last reset" counts from it
+and the sentence says **"since the reset observed on this machine at 14:30"**
+instead of "since the last global reset", so you can always tell which clock you
+are reading. An early reset of an *Anthropic* window never moves the Codex clock:
+the loader filters on the provider id twice, by the per-provider storage key and
+by the id inside the record.
+
+Two honest caveats. A banked credit is a grant rather than a window reset; it is
+counted because it is the same kind of goodwill event and the public record
+carries those rows too. And #1322's store keeps `firstSeenAt`, when CodeBurn
+first saw the credit, rather than `grantedAt`, which never reaches disk — so the
+timestamp errs late by up to one refresh cycle, never early.
+
+**The CLI has no equivalent.** `src/quota/*` fetches live and persists nothing
+between invocations, so `codeburn quota` has no local-reset store to read and
+stays global-only until it gets one. Its forecast is therefore conditioned on the
+bundled record alone.
 
 ### 5. The confidence label, and why it says "low"
 
