@@ -127,8 +127,8 @@ enum CodexResetForecast {
 
     // MARK: - Dataset
 
-    struct History: Decodable, Equatable, Sendable {
-        struct Event: Decodable, Equatable, Sendable {
+    struct History: Codable, Equatable, Sendable {
+        struct Event: Codable, Equatable, Sendable {
             let id: String
             let announcedAt: String
             let type: String
@@ -176,6 +176,55 @@ enum CodexResetForecast {
         return nil
         #endif
     }()
+
+    /// Whether a record that arrived at runtime is one this build can use.
+    ///
+    /// Applied to the raw bytes, not to the decoded value: `Decodable` silently
+    /// drops keys it does not know, so a document carrying post text would
+    /// decode cleanly and the one rule that matters most — nothing beyond the
+    /// four fields — could not be checked afterwards. Mirrors
+    /// `isUsableResetHistory` in `src/reset-forecast.ts`.
+    static func validated(rawJSON: Data) -> History? {
+        guard let root = try? JSONSerialization.jsonObject(with: rawJSON) as? [String: Any] else { return nil }
+        guard root["schema"] as? Int == 1 else { return nil }
+        guard let source = root["source"] as? String, !source.isEmpty else { return nil }
+        guard let generatedAt = root["generated_at"] as? String, parseISO(generatedAt) != nil else { return nil }
+        guard let events = root["events"] as? [[String: Any]] else { return nil }
+
+        let allowed: Set<String> = ["id", "announced_at", "type", "reset_kind"]
+        var seen = Set<String>()
+        var previous = ""
+        var resets = 0
+        for event in events {
+            guard Set(event.keys).isSubset(of: allowed) else { return nil }
+            guard let id = event["id"] as? String,
+                  !id.trimmingCharacters(in: .whitespaces).isEmpty,
+                  !seen.contains(id) else { return nil }
+            seen.insert(id)
+            guard let type = event["type"] as? String, type == "reset" || type == "credits" else { return nil }
+            guard let at = event["announced_at"] as? String, parseISO(at) != nil else { return nil }
+            // Monotonic, which is what makes the inter-reset waits meaningful.
+            if !previous.isEmpty, at < previous { return nil }
+            previous = at
+            if type == "reset" {
+                guard let kind = event["reset_kind"] as? String,
+                      kind.range(of: "^[a-z0-9][a-z0-9_-]{0,31}$", options: .regularExpression) != nil
+                else { return nil }
+                resets += 1
+            } else if event["reset_kind"] != nil {
+                return nil
+            }
+        }
+        // A record with almost nothing in it is not an improvement on the
+        // bundled one.
+        guard resets >= 2 else { return nil }
+        return try? JSONDecoder().decode(History.self, from: rawJSON)
+    }
+
+    /// The record's own build time, for choosing between two copies.
+    static func generatedAt(_ history: History?) -> Date? {
+        parseISO(history?.generatedAt)
+    }
 
     /// `ISO8601DateFormatter` is a non-Sendable class, so it is built where it is
     /// used rather than cached in a static — the same shape every other

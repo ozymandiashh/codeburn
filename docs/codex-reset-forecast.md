@@ -51,21 +51,58 @@ Every text field the upstream carries — post bodies, titles, author names, lin
 — is dropped by `scripts/refresh-codex-reset-history.mjs` and never written. The
 file is a table of times, not a copy of anyone's posts.
 
-### How it is refreshed
+### How it is refreshed, and how fresh it actually is
 
-`.github/workflows/refresh-codex-reset-history.yml` runs every six hours, fetches
-the timeline, normalizes it, validates the shape and the ordering, and opens or
-updates a pull request when the file changes. It never pushes to `main`.
+`.github/workflows/refresh-codex-reset-history.yml` fetches the timeline,
+normalizes it, validates the shape and the ordering, and publishes it two ways:
 
-**`codeburn` itself never fetches this.** Issue #725 rules out new network
-polling in the client, and the maintainer's exception to that non-goal is
-exactly, and only:
+| Path | Cadence | What it is for |
+| --- | --- | --- |
+| Push to `data/codex-reset-history` | every 30 minutes | what installed clients read |
+| Pull request to `main` | weekly | keeps the copy bundled in releases recent |
 
-> the dataset is refreshed by a GitHub Action in the repo, never by the client
-> at runtime.
+It never pushes to `main`, and it has no `push` trigger, so pushing the data
+branch cannot retrigger it.
 
-The forecast is arithmetic over a file that ships with the build. There is no new
-request, no new timer, no new credential, and no new endpoint on any surface.
+**The client fetches the data branch, and nothing else.**
+
+> #725 exception granted by the maintainer on 2026-09-13: a client-side,
+> first-party, conditional fetch of the reset-history dataset from this
+> repository on GitHub, at most hourly, carrying no user data; no request is
+> ever made to codex-reset.com or any third party from the client.
+
+Concretely:
+
+- **One host, `api.github.com`** — the host the macOS app already contacts for
+  update checks. `raw.githubusercontent.com` would have been a new one, so the
+  contents API is used instead, with `Accept: application/vnd.github.raw+json`.
+- **A conditional GET.** The stored ETag goes out as `If-None-Match`, so the
+  common answer is a 304 with no body: one request against the unauthenticated
+  60-per-hour limit.
+- **At most once an hour**, on the refresh that already runs. No new timer, and
+  the attempt is detached, so nothing in the UI waits on it. Only while Codex is
+  connected.
+- **Nothing about you leaves.** No credential, no cookie, no account id, no plan,
+  no usage — an `Accept`, a product `User-Agent`, and the ETag when there is one.
+- **A failure is never worse than not trying.** The record compiled into the
+  build is the floor. A fetched record is adopted only if it passes the same
+  validation the workflow applies *and* is strictly newer.
+
+Turn it off in Settings → General → Notifications, "Refresh reset history from
+GitHub". With it off, only the copy inside the app is used. On the CLI, the same
+fetch honours `CODEBURN_PRICING_SNAPSHOT_ONLY`, the knob that already pins
+pricing to its bundled snapshot; `codeburn quota` prints which copy it read and
+when that copy was built.
+
+### So how stale is any of this?
+
+| Input | How fresh | When it is worse |
+| --- | --- | --- |
+| Distribution of waits | the fetched dataset, ≤ 30 minutes behind the tracker while online | the bundled record — a release old — offline, or with the refresh off |
+| "Since last reset" clock | this machine's own detectors, one quota refresh cycle | the dataset's newest reset, when neither detector has seen one |
+
+The distribution being a release old never mattered much: 44 waits do not change
+shape in a week. The last-reset clock is the one that had to be live, and it is.
 
 ## The model
 

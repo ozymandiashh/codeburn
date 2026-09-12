@@ -101,9 +101,21 @@ export async function collectQuota(options: {
   timeoutMs?: number
   /** Injected by tests so the forecast runs against a fixed clock and history. */
   forecast?: CodexForecastOptions
+  /** Set to skip the hourly dataset refresh, e.g. when a caller has already
+   *  resolved it or a test is pinning the record. */
+  skipResetHistoryRefresh?: boolean
 } = {}): Promise<QuotaReport> {
   const readers = options.readers ?? READERS
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  // Resolved once, before the providers are read, so the forecast that gets
+  // attached below is synchronous and every Codex row sees the same record.
+  // Never fails: the worst case is the record compiled into this build.
+  let forecast = options.forecast
+  if (!options.skipResetHistoryRefresh && !forecast?.history) {
+    const { resolveCodexResetHistory } = await import('./codex-forecast.js')
+    const resolved = await resolveCodexResetHistory({ ...(forecast?.now ? { now: forecast.now } : {}) })
+    forecast = { ...forecast, history: resolved.history, dataset: { source: resolved.source, generatedAt: resolved.generatedAt } }
+  }
   const providers = await Promise.all(readers.map(async entry => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -113,7 +125,7 @@ export async function collectQuota(options: {
       if (quota === 'timeout') {
         return { id: entry.id, name: entry.name, available: false, windows: [], error: 'Timed out.' }
       }
-      return withCodexResetForecast(toCommandProvider(entry.id, entry.name, quota), options.forecast)
+      return withCodexResetForecast(toCommandProvider(entry.id, entry.name, quota), forecast)
     } finally {
       clearTimeout(timer)
     }
@@ -158,7 +170,10 @@ export function renderResetForecastSection(report: QuotaReport): string {
     lines.push(`${provider.name} reset forecast`)
     for (const line of forecast.lines) lines.push(`  ${line}`)
     if (forecast.available) {
-      lines.push(`  Source: ${forecast.source} — refreshed in this repo by a scheduled workflow, never fetched by this client.`)
+      const origin = forecast.dataset.source === 'fetched'
+        ? 'refreshed from this repository on GitHub'
+        : 'bundled with this build'
+      lines.push(`  Record: ${forecast.dataset.generatedAt}, ${origin}. Source: ${forecast.source}.`)
     }
   }
   return lines.length > 0 ? lines.join('\n') + '\n' : ''

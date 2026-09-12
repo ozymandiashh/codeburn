@@ -5,6 +5,7 @@
 // polling in the client" non-goal holds in full: nothing here fetches anything,
 // at any cadence, ever. The forecast is arithmetic over a bundled file.
 
+import { loadResetHistory, type ResetHistoryLoad } from '../codex-reset-history-fetch.js'
 import historyData from '../data/codex-reset-history.json' with { type: 'json' }
 import {
   forecastReset,
@@ -19,11 +20,34 @@ import type { QuotaCommandProvider } from './index.js'
  *  object the command does, rather than re-reading the file by path. */
 export const codexResetHistory = historyData as ResetHistory
 
-export type CodexResetForecastPayload = ResetForecastResult & { lines: string[] }
+export type CodexResetForecastPayload = ResetForecastResult & {
+  lines: string[]
+  /** Which copy of the record produced these numbers, and when it was built. */
+  dataset: { source: 'fetched' | 'bundled'; generatedAt: string }
+}
+
+/**
+ * The record to forecast from, refreshed at most hourly from this repository on
+ * GitHub. Separate from `withCodexResetForecast` because that is synchronous and
+ * pure; the command awaits this once and hands the result in.
+ */
+export async function resolveCodexResetHistory(
+  options: { now?: Date; cacheDir?: string; env?: Record<string, string | undefined>; fetchImpl?: typeof fetch } = {},
+): Promise<ResetHistoryLoad> {
+  return loadResetHistory({
+    bundled: codexResetHistory,
+    ...(options.now ? { now: options.now.getTime() } : {}),
+    ...(options.cacheDir ? { cacheDir: options.cacheDir } : {}),
+    ...(options.env ? { env: options.env } : {}),
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  })
+}
 
 export type CodexForecastOptions = {
   now?: Date
   history?: ResetHistory
+  /** Where `history` came from, for the provenance line. Defaults to bundled. */
+  dataset?: { source: 'fetched' | 'bundled'; generatedAt: string }
   /**
    * Resets this machine observed for itself. The local early-reset detector
    * (#1320) and the banked-credit watcher (#1322) are the intended sources;
@@ -44,10 +68,13 @@ export function withCodexResetForecast(
   options: CodexForecastOptions = {},
 ): QuotaCommandProvider {
   if (provider.id !== 'codex' || !provider.available) return provider
+  const history = options.history ?? codexResetHistory
   const result = forecastReset({
-    history: options.history ?? codexResetHistory,
+    history,
     now: options.now ?? new Date(),
     localEvents: options.localEvents,
   })
-  return { ...provider, resetForecast: { ...result, lines: renderForecastLines(result) } }
+  const dataset = options.dataset
+    ?? { source: 'bundled' as const, generatedAt: history.generated_at }
+  return { ...provider, resetForecast: { ...result, lines: renderForecastLines(result), dataset } }
 }

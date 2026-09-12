@@ -68,7 +68,17 @@ describe('the Codex section of `codeburn quota`', () => {
     expect(tableAndRest).not.toMatch(/Reset forecast:/)
     expect(rendered).toContain('\nCodex reset forecast\n')
     expect(rendered).toMatch(/ {2}Reset forecast: .* chance in the next 24h \(\d+ to \d+%\)/)
-    expect(rendered).toMatch(/ {2}Source: https:\/\/codex-reset\.com\/api\/timeline — refreshed in this repo/)
+    // Provenance: when the record was built and which copy was read.
+    expect(rendered).toMatch(/ {2}Record: \S+, bundled with this build\. Source: https:\/\/codex-reset\.com\/api\/timeline\./)
+  })
+
+  it('says when the record came from the hourly refresh rather than the build', () => {
+    const provider = withCodexResetForecast(commandProvider(), {
+      now: NOW,
+      dataset: { source: 'fetched', generatedAt: '2026-09-13T11:30:00Z' },
+    })
+    const rendered = renderQuotaTable({ providers: [provider] }, { color: false })
+    expect(rendered).toContain('  Record: 2026-09-13T11:30:00Z, refreshed from this repository on GitHub.')
   })
 
   it('renders nothing extra for a report with no Codex forecast in it', () => {

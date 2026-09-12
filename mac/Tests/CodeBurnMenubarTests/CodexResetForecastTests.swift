@@ -840,3 +840,205 @@ private struct LocalEventSandbox {
     components.hour = 14; components.minute = 30
     #expect(CodexResetForecastPresentation.localClock(Calendar.current.date(from: components)!) == "14:30")
 }
+
+// MARK: - The hourly, first-party reset-history refresh
+
+private func historyJSON(generatedAt: String, resets: Int = 3, extraField: Bool = false, scrambled: Bool = false) -> Data {
+    var rows: [String] = []
+    for index in 0..<resets {
+        let day = scrambled && index == 1 ? "2020-01-01" : String(format: "2026-01-%02d", index + 1)
+        let extra = extraField && index == 0 ? ",\"text\":\"Resetting limits for everyone!\"" : ""
+        rows.append("{\"id\":\"r\(index)\",\"announced_at\":\"\(day)T00:00:00Z\",\"type\":\"reset\",\"reset_kind\":\"global\"\(extra)}")
+    }
+    let json = "{\"schema\":1,\"source\":\"https://codex-reset.com/api/timeline\","
+        + "\"generated_at\":\"\(generatedAt)\",\"events\":[\(rows.joined(separator: ","))]}"
+    return Data(json.utf8)
+}
+
+private func decodedHistory(_ generatedAt: String, resets: Int = 3) -> CodexResetForecast.History {
+    CodexResetForecast.validated(rawJSON: historyJSON(generatedAt: generatedAt, resets: resets))!
+}
+
+private let fetchNow = Date(timeIntervalSince1970: 1_757_764_800)
+private let bundledRecord = decodedHistory("2026-09-01T00:00:00Z")
+private let newerRecord = decodedHistory("2026-09-13T11:30:00Z", resets: 4)
+
+@Test func theFetchTargetsTheOneHostTheAppAlreadyContacts() {
+    // UpdateChecker already talks to api.github.com. raw.githubusercontent.com
+    // would have been a host this app has never used.
+    #expect(CodexResetHistoryPolicy.host == "api.github.com")
+    let url = CodexResetHistoryPolicy.url.absoluteString
+    #expect(url.contains("ref=data/codex-reset-history"))
+    #expect(!url.contains("codex-reset.com"))
+    #expect(!url.contains("raw.githubusercontent.com"))
+}
+
+@Test func theFetchIsDueOnlyOnceAnHour() {
+    #expect(CodexResetHistoryPolicy.isDue(cache: nil, now: fetchNow))
+    let justTried = CodexResetHistoryCache(attemptedAt: fetchNow, etag: nil, document: nil)
+    #expect(!CodexResetHistoryPolicy.isDue(cache: justTried, now: fetchNow.addingTimeInterval(3599)))
+    #expect(CodexResetHistoryPolicy.isDue(cache: justTried, now: fetchNow.addingTimeInterval(3600)))
+}
+
+@Test func aNewerRecordIsAdoptedAndItsETagKept() {
+    let next = CodexResetHistoryPolicy.apply(
+        status: 200, body: historyJSON(generatedAt: "2026-09-13T11:30:00Z", resets: 4),
+        etag: "W/\"abc\"", retryAfterSeconds: nil, cache: nil, bundled: bundledRecord, now: fetchNow
+    )
+    #expect(next.document?.generatedAt == "2026-09-13T11:30:00Z")
+    #expect(next.etag == "W/\"abc\"")
+    #expect(CodexResetHistoryPolicy.resolve(bundled: bundledRecord, cached: next.document).source == .fetched)
+}
+
+@Test func aThreeOhFourKeepsWhatIsHeldAndRestartsTheClock() {
+    let held = CodexResetHistoryCache(attemptedAt: fetchNow.addingTimeInterval(-7200), etag: "W/\"abc\"", document: newerRecord)
+    let next = CodexResetHistoryPolicy.apply(
+        status: 304, body: Data(), etag: nil, retryAfterSeconds: nil,
+        cache: held, bundled: bundledRecord, now: fetchNow
+    )
+    #expect(next.document == newerRecord)
+    #expect(next.etag == "W/\"abc\"")
+    #expect(next.attemptedAt == fetchNow)
+}
+
+@Test func aThreeOhFourBodyIsNeverRead() {
+    // A proxy or a misconfigured cache can answer 304 with a body anyway.
+    // "Unchanged" has to mean unchanged.
+    let held = CodexResetHistoryCache(attemptedAt: fetchNow.addingTimeInterval(-7200), etag: nil, document: newerRecord)
+    let next = CodexResetHistoryPolicy.apply(
+        status: 304, body: historyJSON(generatedAt: "2027-01-01T00:00:00Z", resets: 5),
+        etag: nil, retryAfterSeconds: nil, cache: held, bundled: bundledRecord, now: fetchNow
+    )
+    #expect(next.document == newerRecord)
+}
+
+@Test func theBundledRecordWinsATie() {
+    let sameAge = CodexResetForecast.validated(rawJSON: historyJSON(generatedAt: bundledRecord.generatedAt, resets: 7))
+    #expect(CodexResetHistoryPolicy.resolve(bundled: bundledRecord, cached: sameAge).source == .bundled)
+}
+
+@Test func theValidatorRefusesAnotherSchemaAndACreditWearingAResetKind() {
+    let twoResets = "{\"id\":\"a\",\"announced_at\":\"2026-01-01T00:00:00Z\",\"type\":\"reset\",\"reset_kind\":\"global\"},"
+        + "{\"id\":\"b\",\"announced_at\":\"2026-01-02T00:00:00Z\",\"type\":\"reset\",\"reset_kind\":\"global\"}"
+    let otherSchema = "{\"schema\":2,\"source\":\"s\",\"generated_at\":\"2026-09-13T11:30:00Z\",\"events\":[\(twoResets)]}"
+    #expect(CodexResetForecast.validated(rawJSON: Data(otherSchema.utf8)) == nil)
+
+    let credit = ",{\"id\":\"c\",\"announced_at\":\"2026-01-03T00:00:00Z\",\"type\":\"credits\",\"reset_kind\":\"global\"}"
+    let creditWithKind = "{\"schema\":1,\"source\":\"s\",\"generated_at\":\"2026-09-13T11:30:00Z\",\"events\":[\(twoResets)\(credit)]}"
+    #expect(CodexResetForecast.validated(rawJSON: Data(creditWithKind.utf8)) == nil)
+}
+
+@Test func anOlderOrEqualRecordIsNotAnUpdate() {
+    for generatedAt in ["2026-08-01T00:00:00Z", bundledRecord.generatedAt] {
+        let next = CodexResetHistoryPolicy.apply(
+            status: 200, body: historyJSON(generatedAt: generatedAt, resets: 9),
+            etag: nil, retryAfterSeconds: nil, cache: nil, bundled: bundledRecord, now: fetchNow
+        )
+        #expect(next.document == nil)
+        #expect(CodexResetHistoryPolicy.resolve(bundled: bundledRecord, cached: next.document).source == .bundled)
+    }
+}
+
+@Test func aMalformedOrDishonestRecordIsRejected() {
+    let bodies: [Data] = [
+        Data(), Data("not json".utf8), Data("{}".utf8), Data("[]".utf8),
+        // Carries post text: the rule that matters most, and the one a decoder
+        // would have silently dropped.
+        historyJSON(generatedAt: "2026-09-13T11:30:00Z", extraField: true),
+        // Timestamps go backwards.
+        historyJSON(generatedAt: "2026-09-13T11:30:00Z", resets: 4, scrambled: true),
+        // Not enough resets to be an improvement on anything.
+        historyJSON(generatedAt: "2026-09-13T11:30:00Z", resets: 1),
+    ]
+    for body in bodies {
+        #expect(CodexResetForecast.validated(rawJSON: body) == nil)
+        let next = CodexResetHistoryPolicy.apply(
+            status: 200, body: body, etag: "W/\"x\"", retryAfterSeconds: nil,
+            cache: nil, bundled: bundledRecord, now: fetchNow
+        )
+        #expect(next.document == nil)
+    }
+}
+
+@Test func aRefusalOrAnErrorLeavesTheRecordAlone() {
+    let held = CodexResetHistoryCache(attemptedAt: fetchNow.addingTimeInterval(-7200), etag: "W/\"abc\"", document: newerRecord)
+    for status in [403, 404, 500, 0] {
+        let next = CodexResetHistoryPolicy.apply(
+            status: status, body: Data(), etag: nil, retryAfterSeconds: nil,
+            cache: held, bundled: bundledRecord, now: fetchNow
+        )
+        #expect(next.document == newerRecord)
+    }
+}
+
+@Test func retryAfterPushesTheNextAttemptOutRatherThanSleeping() {
+    let next = CodexResetHistoryPolicy.apply(
+        status: 403, body: Data(), etag: nil, retryAfterSeconds: 7200,
+        cache: nil, bundled: bundledRecord, now: fetchNow
+    )
+    // An hour later is still too early; two hours later is not.
+    #expect(!CodexResetHistoryPolicy.isDue(cache: next, now: fetchNow.addingTimeInterval(3600)))
+    #expect(CodexResetHistoryPolicy.isDue(cache: next, now: fetchNow.addingTimeInterval(7201)))
+}
+
+@Test func withNothingFetchedTheForecastReadsTheBundledRecord() {
+    let resolution = CodexResetHistoryPolicy.resolve(bundled: bundledRecord, cached: nil)
+    #expect(resolution.source == .bundled)
+    #expect(resolution.history == bundledRecord)
+}
+
+@Test func theRefreshIsOnByDefaultUnlikeTheNotification() {
+    let defaults = UserDefaults(suiteName: "codeburn.tests.resetHistoryRefresh")!
+    defaults.removePersistentDomain(forName: "codeburn.tests.resetHistoryRefresh")
+    #expect(CodexResetHistoryRefreshPreference.isEnabled(defaults: defaults))
+    #expect(CodexResetForecastNotificationPreference.isEnabled(defaults: defaults) == false)
+}
+
+/// A store that starts empty and records what it is asked to keep.
+private actor RecordingCacheStore: CodexResetHistoryCacheStoring {
+    private var held: CodexResetHistoryCache?
+    private(set) var saves = 0
+    init(_ initial: CodexResetHistoryCache? = nil) { held = initial }
+    func load() async -> CodexResetHistoryCache? { held }
+    func save(_ cache: CodexResetHistoryCache) async { held = cache; saves += 1 }
+    func current() -> CodexResetHistoryCache? { held }
+}
+
+@Test func theSwitchBeingOffMeansNoRequestAndTheBundledRecord() async {
+    var requests = 0
+    let fetcher = CodexResetHistoryFetcher(store: RecordingCacheStore()) { _ in
+        requests += 1
+        return (Data(), URLResponse())
+    }
+    let resolution = await fetcher.refreshIfDue(bundled: bundledRecord, enabled: false, now: fetchNow)
+    #expect(requests == 0)
+    #expect(resolution.source == .bundled)
+}
+
+@Test func theRequestCarriesNothingAboutTheUser() async {
+    var seen: URLRequest?
+    let fetcher = CodexResetHistoryFetcher(store: RecordingCacheStore()) { request in
+        seen = request
+        return (Data(), HTTPURLResponse(url: request.url!, statusCode: 304, httpVersion: nil, headerFields: nil)!)
+    }
+    _ = await fetcher.refreshIfDue(bundled: bundledRecord, enabled: true, now: fetchNow)
+    let headers = seen?.allHTTPHeaderFields ?? [:]
+    #expect(Set(headers.keys) == ["Accept", "User-Agent"])
+    #expect(headers["Accept"] == "application/vnd.github.raw+json")
+    #expect(seen?.httpShouldHandleCookies == false)
+    #expect(seen?.httpBody == nil)
+}
+
+@Test func aNetworkFailureIsRecordedAsAnAttemptAndNotRetriedImmediately() async {
+    struct Offline: Error {}
+    var requests = 0
+    let store = RecordingCacheStore()
+    let fetcher = CodexResetHistoryFetcher(store: store) { _ in
+        requests += 1
+        throw Offline()
+    }
+    let first = await fetcher.refreshIfDue(bundled: bundledRecord, enabled: true, now: fetchNow)
+    #expect(first.source == .bundled)
+    _ = await fetcher.refreshIfDue(bundled: bundledRecord, enabled: true, now: fetchNow.addingTimeInterval(60))
+    #expect(requests == 1)
+}

@@ -167,6 +167,50 @@ export function isWorkingHoursSF(at: Date): boolean {
   return hour >= WORKING_HOURS_SF_START && hour < WORKING_HOURS_SF_END
 }
 
+/**
+ * Whether a document is a reset history this build can use. The shape checks the
+ * refresh workflow applies, re-applied to anything that arrives at runtime:
+ * a fetched file is not trusted because of where it came from.
+ *
+ * Deliberately in the shipped module rather than in `scripts/`, so the client
+ * and the workflow cannot drift, and so a fetched record that would validate in
+ * CI but not here is rejected here.
+ */
+export function isUsableResetHistory(value: unknown): value is ResetHistory {
+  if (!value || typeof value !== 'object') return false
+  const doc = value as Record<string, unknown>
+  if (doc.schema !== 1) return false
+  if (typeof doc.source !== 'string' || !doc.source) return false
+  if (typeof doc.generated_at !== 'string' || !Number.isFinite(Date.parse(doc.generated_at))) return false
+  if (!Array.isArray(doc.events)) return false
+
+  const allowed = new Set(['id', 'announced_at', 'type', 'reset_kind'])
+  const seen = new Set<string>()
+  let previous = ''
+  let resets = 0
+  for (const raw of doc.events) {
+    if (!raw || typeof raw !== 'object') return false
+    const event = raw as Record<string, unknown>
+    // No field beyond the four: a record carrying post text is not one of ours,
+    // whatever else it validates as.
+    if (Object.keys(event).some(key => !allowed.has(key))) return false
+    if (typeof event.id !== 'string' || !event.id.trim() || seen.has(event.id)) return false
+    seen.add(event.id)
+    if (event.type !== 'reset' && event.type !== 'credits') return false
+    if (typeof event.announced_at !== 'string' || !Number.isFinite(Date.parse(event.announced_at))) return false
+    if (previous && event.announced_at < previous) return false
+    previous = event.announced_at
+    if (event.type === 'reset') {
+      if (typeof event.reset_kind !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,31}$/.test(event.reset_kind)) return false
+      resets += 1
+    } else if ('reset_kind' in event) {
+      return false
+    }
+  }
+  // A record with almost nothing in it is not an improvement on the bundled one.
+  return resets >= 2
+}
+
 /** Reset instants in the record, ascending, de-duplicated, non-finite dropped. */
 export function resetInstants(history: ResetHistory | null | undefined): number[] {
   const events = Array.isArray(history?.events) ? history.events : []

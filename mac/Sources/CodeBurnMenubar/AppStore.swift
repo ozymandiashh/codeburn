@@ -261,6 +261,15 @@ final class AppStore {
     @ObservationIgnored var codexResetForecastLocalEventLoader: @Sendable () -> [CodexResetForecast.LocalResetEvent] = {
         CodexResetForecastLocalEvents.load()
     }
+    /// Conditional, at most hourly, first-party refresh of the reset history.
+    /// Owns no timer: the Codex quota refresh calls it and it decides whether
+    /// anything is due.
+    @ObservationIgnored var codexResetHistoryFetcher = CodexResetHistoryFetcher()
+    /// The record the forecast is currently reading, and where it came from.
+    /// Starts as the bundled copy, so the forecast is never worse than it was
+    /// before the fetch existed.
+    private(set) var codexResetHistory: CodexResetForecast.History? = CodexResetForecast.bundled
+    private(set) var codexResetHistorySource: CodexResetHistorySource = .bundled
     @ObservationIgnored var capacityDockCredentialLoader:
         @Sendable (String) async throws -> CapacityDockProviderCredential = {
             try await CapacityDockProviderCredentialStore.loadAsync(for: $0)
@@ -1659,6 +1668,7 @@ final class AppStore {
             codexLoadState = .loaded
             await codexBankedResetAnnouncer.observe(usage.resetCredits)
             await announceCodexResetForecast()
+            refreshCodexResetHistoryInBackground()
         } catch let err as CodexSubscriptionService.FetchError {
             applyCodexFetchError(err)
         } catch {
@@ -1701,6 +1711,7 @@ final class AppStore {
             // side-effect of a successful fetch and must not be able to hold
             // the single-flight token open.
             await announceCodexResetForecast()
+            refreshCodexResetHistoryInBackground()
             return true
         } catch let err as CodexSubscriptionService.FetchError {
             guard isCurrentCodexQuotaRefresh(token) else { return false }
@@ -2754,10 +2765,30 @@ final class AppStore {
     /// on the global record, exactly as before.
     func codexResetForecast(localEvents: [CodexResetForecast.LocalResetEvent]? = nil) -> CodexResetForecast.Result {
         CodexResetForecast.evaluate(
-            history: CodexResetForecast.bundled,
+            history: codexResetHistory,
             now: codexResetForecastClock(),
             localEvents: localEvents ?? codexResetForecastLocalEventLoader()
         )
+    }
+
+    /// Refreshes the reset history if an hour has passed, off the main path.
+    /// Detached on purpose: nothing in the UI waits on a network call, and the
+    /// forecast keeps reading whatever record it already has until this lands.
+    /// Only while Codex is connected — a machine not signed in to Codex has no
+    /// use for the record and should not be making the request.
+    func refreshCodexResetHistoryInBackground() {
+        guard case .loaded = codexLoadState else { return }
+        let enabled = CodexResetHistoryRefreshPreference.isEnabled()
+        let fetcher = codexResetHistoryFetcher
+        let bundled = CodexResetForecast.bundled
+        Task { [weak self] in
+            let resolution = await fetcher.refreshIfDue(bundled: bundled, enabled: enabled)
+            await MainActor.run {
+                guard let self else { return }
+                self.codexResetHistory = resolution.history
+                self.codexResetHistorySource = resolution.source
+            }
+        }
     }
 
     /// Hands the current forecast to the opt-in crossing notice. Silent unless

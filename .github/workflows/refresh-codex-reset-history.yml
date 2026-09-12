@@ -1,11 +1,22 @@
 name: Refresh Codex reset history
 
-# The Codex reset forecast reads a dataset committed to this repo. This is the
-# only thing that refreshes it. #725 forbids new network polling in the client;
-# the maintainer's exception is exactly this and nothing wider:
+# The Codex reset forecast reads a dataset published from this repository. This
+# workflow is the only thing that refreshes it, and it is the only thing that
+# ever contacts codex-reset.com: the client never does.
 #
-#   the dataset is refreshed by a GitHub Action in the repo, never by the
-#   client at runtime.
+# #725 exception granted by the maintainer on 2026-09-13: a client-side,
+# first-party, conditional fetch of the reset-history dataset from this
+# repository on GitHub, at most hourly, carrying no user data; no request is
+# ever made to codex-reset.com or any third party from the client.
+#
+# Two publication paths, for two different jobs:
+#
+#   data/codex-reset-history   every 30 minutes, pushed directly. This is what
+#                              installed clients conditionally GET, so it is what
+#                              makes the record fresher than a release cycle.
+#   main (pull request)        weekly. Keeps the record bundled in releases
+#                              recent, which is the offline fallback and the
+#                              floor a fetch can only improve on.
 #
 # Source: https://codex-reset.com/api/timeline, a public community tracker that
 # is not operated by or endorsed by OpenAI. Only event ids, timestamps, the
@@ -14,10 +25,16 @@ name: Refresh Codex reset history
 
 on:
   schedule:
-    # Every six hours. The record has never moved faster than a couple of
-    # events a day, so this is comfortably ahead of it without being chatty.
-    - cron: "17 */6 * * *"
+    # Every 30 minutes. The upstream caches for 60s, so this is cheap, and it
+    # bounds how far behind the tracker an online client can be.
+    - cron: "*/30 * * * *"
+    # Weekly, and additionally opens or updates the pull request to main.
+    - cron: "23 6 * * 1"
   workflow_dispatch:
+
+# No `push` trigger, deliberately: this workflow pushes to
+# `data/codex-reset-history`, and a push trigger would make it retrigger itself
+# every 30 minutes forever.
 
 permissions:
   contents: write
@@ -29,11 +46,14 @@ concurrency:
 
 jobs:
   refresh:
-    # Scheduled runs only on the default branch; a fork's schedule has nothing
-    # to refresh and no branch to publish to.
     if: github.repository == 'getagentseal/codeburn'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      DATA_BRANCH: data/codex-reset-history
+      REVIEW_BRANCH: chore/codex-reset-history
+      CANONICAL: src/data/codex-reset-history.json
+      BUNDLED: mac/Sources/CodeBurnMenubar/Resources/CodexResetHistory/codex-reset-history.json
     steps:
       - uses: actions/checkout@v6
 
@@ -46,8 +66,8 @@ jobs:
 
       - name: Check the dataset the client will actually read
         # The refresh script validates its own output; this runs the client's
-        # parser over the written file so a dataset that validates but that the
-        # forecast cannot use never reaches a pull request.
+        # own parser over the written file, so a dataset that validates but that
+        # the forecast cannot use is never published.
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
@@ -65,11 +85,19 @@ jobs:
           console.log(`${doc.events.length} events, ${resets.length} resets, newest ${resets[resets.length - 1].announced_at}.`)
           NODE
 
-      - name: Publish the update as a pull request
+      - name: Stash the refreshed files
+        # Both publication paths start from a clean checkout of a different ref,
+        # so the two files are carried out of band rather than dragged across a
+        # branch switch.
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dataset"
+          cp "$CANONICAL" "$RUNNER_TEMP/dataset/canonical.json"
+          cp "$BUNDLED" "$RUNNER_TEMP/dataset/bundled.json"
+          git checkout -- "$CANONICAL" "$BUNDLED"
+
+      - name: Publish to the data branch
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BRANCH: chore/codex-reset-history
-          BASE: ${{ github.event.repository.default_branch }}
           SERVER: ${{ github.server_url }}
           REPOSITORY: ${{ github.repository }}
         run: |
@@ -78,22 +106,57 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add src/data/codex-reset-history.json \
-                  mac/Sources/CodeBurnMenubar/Resources/CodexResetHistory/codex-reset-history.json
+          if git ls-remote --exit-code --heads origin "$DATA_BRANCH" >/dev/null 2>&1; then
+            git fetch --depth=1 origin "$DATA_BRANCH"
+            git switch -C "$DATA_BRANCH" "origin/$DATA_BRANCH"
+            lease="--force-with-lease=refs/heads/${DATA_BRANCH}:$(git rev-parse "origin/$DATA_BRANCH")"
+          else
+            git switch -C "$DATA_BRANCH"
+            lease=""
+          fi
+
+          mkdir -p "$(dirname "$CANONICAL")" "$(dirname "$BUNDLED")"
+          cp "$RUNNER_TEMP/dataset/canonical.json" "$CANONICAL"
+          cp "$RUNNER_TEMP/dataset/bundled.json" "$BUNDLED"
+          git add "$CANONICAL" "$BUNDLED"
           if git diff --cached --quiet; then
-            echo "No new reset events; nothing to publish."
+            echo "No new reset events; the data branch already matches." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          # Never main. A rolling branch plus a pull request, so the record that
-          # feeds a user-facing probability is reviewed like any other change.
-          git switch -C "$BRANCH"
           git commit -m "chore(data): refresh Codex reset history"
-          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
-            git fetch origin "$BRANCH"
-            git push --force-with-lease origin "HEAD:refs/heads/${BRANCH}"
+          # Never main. This branch carries data only and is what clients read.
+          git push $lease origin "HEAD:refs/heads/${DATA_BRANCH}"
+          echo "Pushed to \`${DATA_BRANCH}\`." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the weekly pull request to main
+        # Only on the weekly cron or a manual run: the bundled copy is a release
+        # artifact, and a pull request every 30 minutes would be noise.
+        if: github.event.schedule == '23 6 * * 1' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE: ${{ github.event.repository.default_branch }}
+          SERVER: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          git fetch --depth=1 origin "$BASE"
+          git switch -C "$REVIEW_BRANCH" "origin/$BASE"
+          cp "$RUNNER_TEMP/dataset/canonical.json" "$CANONICAL"
+          cp "$RUNNER_TEMP/dataset/bundled.json" "$BUNDLED"
+          git add "$CANONICAL" "$BUNDLED"
+          if git diff --cached --quiet; then
+            echo "The bundled record already matches main; nothing to review."
+            exit 0
+          fi
+
+          git commit -m "chore(data): refresh the bundled Codex reset history"
+          if git ls-remote --exit-code --heads origin "$REVIEW_BRANCH" >/dev/null 2>&1; then
+            git fetch origin "$REVIEW_BRANCH"
+            git push --force-with-lease origin "HEAD:refs/heads/${REVIEW_BRANCH}"
           else
-            git push -u origin "HEAD:refs/heads/${BRANCH}"
+            git push -u origin "HEAD:refs/heads/${REVIEW_BRANCH}"
           fi
 
           summary=$(node --input-type=module <<'NODE'
@@ -106,29 +169,25 @@ jobs:
           )
 
           body=$(printf '%s\n' \
-            "Scheduled refresh of the Codex reset history that \`codeburn quota\`'s reset forecast reads." \
+            "Weekly refresh of the Codex reset history bundled with releases." \
             "" \
             "$summary" \
             "" \
-            "Source: https://codex-reset.com/api/timeline — a public community tracker, not operated by or endorsed by OpenAI. Only event ids, timestamps, the event type and a reset kind are kept; every text field is dropped before anything is written." \
+            "Installed clients already read the every-30-minutes copy from \`data/codex-reset-history\`. This pull request keeps the copy compiled into the next release recent, which is the offline fallback and the floor a fetch can only improve on." \
             "" \
-            "The client never fetches this. It reads the committed file only.")
+            "Source: https://codex-reset.com/api/timeline — a public community tracker, not operated by or endorsed by OpenAI. Only event ids, timestamps, the event type and a reset kind are kept; every text field is dropped before anything is written. The client never contacts that host." )
 
-          # An existing pull request is updated by the push above; only its body
-          # needs refreshing. Creating one can be disabled org-wide, so a
-          # failure here falls back to the comparison URL rather than failing
-          # the run and losing the pushed branch.
-          if existing=$(gh pr list --head "$BRANCH" --base "$BASE" --state open --json number --jq '.[0].number') && [ -n "$existing" ]; then
+          if existing=$(gh pr list --head "$REVIEW_BRANCH" --base "$BASE" --state open --json number --jq '.[0].number') && [ -n "$existing" ]; then
             gh pr edit "$existing" --body "$body" || true
             echo "Updated pull request #${existing}." >> "$GITHUB_STEP_SUMMARY"
-          elif gh pr create --base "$BASE" --head "$BRANCH" --title "chore(data): refresh Codex reset history" --body "$body"; then
-            echo "Opened a pull request from \`${BRANCH}\`." >> "$GITHUB_STEP_SUMMARY"
+          elif gh pr create --base "$BASE" --head "$REVIEW_BRANCH" --title "chore(data): refresh the bundled Codex reset history" --body "$body"; then
+            echo "Opened a pull request from \`${REVIEW_BRANCH}\`." >> "$GITHUB_STEP_SUMMARY"
           else
             {
               echo "## Codex reset history updated"
               echo
-              echo "The branch \`${BRANCH}\` was pushed, but this workflow could not open a pull request (Actions may be barred from creating them in this organization). Open it from the comparison URL below."
+              echo "The branch \`${REVIEW_BRANCH}\` was pushed, but this workflow could not open a pull request (Actions may be barred from creating them in this organization). Open it from the comparison URL below."
               echo
-              echo "[Open pull request](${SERVER}/${REPOSITORY}/compare/${BASE}...${BRANCH}?expand=1)"
+              echo "[Open pull request](${SERVER}/${REPOSITORY}/compare/${BASE}...${REVIEW_BRANCH}?expand=1)"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
