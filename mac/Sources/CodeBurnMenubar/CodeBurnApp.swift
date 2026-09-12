@@ -1334,14 +1334,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
 
         // nil whenever the setting is off or the chosen metric has no data, in
         // which case the title falls back to the single-row composition.
-        let secondRow = MenubarRowFormatter.secondRow(
-            settings: store.menubarRowSettings,
-            snapshot: store.menubarRowSnapshot
-        )
+        // `menubarRowSnapshot` walks every provider's quota summary and reads
+        // the today block, so it is only built once the setting is on: with the
+        // row off a refresh costs no more than the bool it already reads.
+        let rowSettings = store.menubarRowSettings
+        let secondRow = rowSettings.isSecondRowEnabled
+            ? MenubarRowFormatter.secondRow(settings: rowSettings, snapshot: store.menubarRowSnapshot)
+            : nil
         applyTitleLineMode(to: button, multiline: secondRow != nil)
-        button.attributedTitle = composeStatusTitle(
+        let title = composeStatusTitle(
             style: secondRow == nil ? .singleRow : .twoRow,
             secondRow: secondRow
+        )
+        button.attributedTitle = title
+        // The two-line title is one string with a literal newline in it, which
+        // VoiceOver reads as a single run-on phrase. Spell it out instead. The
+        // single-row state sets nil, so turning the row off restores exactly the
+        // label AppKit derives from the title on its own.
+        button.setAccessibilityLabel(
+            secondRow == nil ? nil : MenubarRowFormatter.accessibilityLabel(title: title.string)
         )
 
         let menubarPeriod = store.menubarPeriod
@@ -1833,6 +1844,10 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
+        // Only the release notice installs anything. Every other poster shares
+        // this delegate, so a tap on one of those must not start an update.
+        guard response.notification.request.identifier
+            .hasPrefix(UpdateChecker.notificationIdentifierPrefix) else { return }
         await MainActor.run { self.updateChecker.performFullUpdate() }
     }
 }

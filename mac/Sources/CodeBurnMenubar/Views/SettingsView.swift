@@ -391,6 +391,12 @@ private struct GeneralSettingsTab: View {
     @AppStorage(UpdateNotificationPreference.defaultsKey)
     private var notifyAboutUpdates: Bool = true
 
+    @AppStorage(CodexBankedResetNotificationPreference.defaultsKey)
+    private var notifyAboutBankedResets: Bool = true
+
+    @AppStorage(EarlyQuotaResetPreference.defaultsKey)
+    private var notifyAboutEarlyResets: Bool = true
+
     private let costPresets: Set<Double> = [25, 50, 100, 200, 500]
     private let tokenPresets: Set<Double> = [1_000_000, 5_000_000, 10_000_000, 25_000_000, 50_000_000, 100_000_000]
 
@@ -506,9 +512,17 @@ private struct GeneralSettingsTab: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section(L("Updates")) {
+            Section(L("Notifications")) {
                 Toggle(L("Notify me about updates"), isOn: $notifyAboutUpdates)
                 Text(L("Posts a notification when a new CodeBurn release is available. Click it to install."))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Toggle("Notify me when Codex banks a limit reset", isOn: $notifyAboutBankedResets)
+                Text("OpenAI sometimes grants Codex accounts a credit that resets a rate-limit window early. CodeBurn reads these from the quota response it already fetches and tells you once per grant. It never spends one.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Toggle("Notify me when a quota resets early", isOn: $notifyAboutEarlyResets)
+                Text("Posts a notification when a provider resets a usage limit before its scheduled time, so you know the capacity is back. The Capacity Dock shows the same notice for 12 hours either way.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -1402,7 +1416,7 @@ private struct CopilotSettingsTab: View {
             }
             CopilotTokenSection()
             Section {
-                Text(L("Copilot live-quota tracking reads a GitHub token that is already on this Mac, read-only. Nothing is copied or stored. CodeBurn looks at the editor plugin files in `~/.config/github-copilot`, the Copilot CLI's `~/.copilot` files, the COPILOT_GITHUB_TOKEN, GH_TOKEN and GITHUB_TOKEN variables, `gh auth token`, and finally a token you paste below. Usage tracking works without any of this; only the live quota bars need a token. A credential found for a GitHub Enterprise Cloud host is queried on that tenant's own API (api.<tenant>.ghe.com) and never sent to api.github.com."))
+                Text(L("Copilot live-quota tracking reads a GitHub token that is already on this Mac, read-only. Nothing is copied or stored. CodeBurn looks at the editor plugin files in `~/.config/github-copilot`, the Copilot CLI's `~/.copilot` files, the COPILOT_GITHUB_TOKEN, GH_TOKEN and GITHUB_TOKEN variables, `gh auth token`, and finally a token you paste below. Usage tracking works without any of this; only the live quota bars need a token. Every one of those carries the GitHub host it belongs to — the plugin files are keyed by host, the variables are read with GH_HOST, the `gh` login with the host in gh's own hosts.yml, and a pasted token with the host you type beside it — and a credential for a GitHub Enterprise Cloud host is queried on that tenant's own API (api.<tenant>.ghe.com), never sent to api.github.com."))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             } header: {
@@ -1419,12 +1433,18 @@ private struct CopilotSettingsTab: View {
 private struct CopilotTokenSection: View {
     @Environment(AppStore.self) private var store
     @State private var token = ""
+    /// The GitHub host the pasted token belongs to. An enterprise PAT is not a
+    /// dotcom token, so this rung has to carry a host like the credential
+    /// files do (#1306).
+    @State private var host = CopilotHostEndpoint.defaultHost
     @State private var isSaving = false
     @State private var errorText: String?
 
     var body: some View {
         Section {
             SecureField(L("GitHub token"), text: $token)
+            TextField(L("GitHub host"), text: $host, prompt: Text(CopilotHostEndpoint.defaultHost))
+                .disableAutocorrection(true)
             HStack {
                 Button(L("Save & Connect")) { save(token) }
                     .buttonStyle(.borderedProminent)
@@ -1443,22 +1463,53 @@ private struct CopilotTokenSection: View {
         } header: {
             Text(L("Paste a token"))
         } footer: {
-            Text(L("Optional, and only needed when nothing else on this Mac is signed in. A fine-grained personal access token with the \"Plan: Read-only\" permission is enough. The token is saved in CodeBurn's own Keychain item and is used only to read your Copilot quota."))
+            Text(L("Optional, and only needed when nothing else on this Mac is signed in. A fine-grained personal access token with the \"Plan: Read-only\" permission is enough. Leave the host at github.com unless the token was minted on a GitHub Enterprise Cloud tenant, in which case enter that tenant's host (<tenant>.ghe.com) so the token is never sent to api.github.com. Both are saved in CodeBurn's own Keychain item and are used only to read your Copilot quota."))
                 .font(.system(size: 11))
         }
+        .task { await loadSavedHost() }
+    }
+
+    /// Shows the host already on file so a saved tenant is not silently
+    /// replaced with github.com on the next save. Gated on the non-secret
+    /// presence index, so a Mac with nothing pasted never touches Keychain.
+    private func loadSavedHost() async {
+        guard CapacityDockProviderCredentialPresence.contains(CopilotSubscriptionService.providerID) else { return }
+        guard let saved = try? await CapacityDockProviderCredentialStore.loadAsync(
+            for: CopilotSubscriptionService.providerID
+        ).sanitizedOverride.host else { return }
+        host = saved
     }
 
     private func save(_ raw: String) {
+        let trimmedToken = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Clearing drops the host with the token: a host on its own addresses
+        // nothing, and leaving it behind would pair it with the next token.
+        if trimmedToken.isEmpty {
+            persist(CapacityDockProviderCredential())
+            return
+        }
+        // Refuse a host no endpoint can be derived from at the field the user
+        // typed, instead of saving it and reporting a terminal fetch failure.
+        if let rejection = CopilotQuotaPresentation.pastedHostRejection(host) {
+            errorText = rejection
+            return
+        }
+        let resolvedHost = CopilotHostEndpoint.normalize(host) ?? CopilotHostEndpoint.defaultHost
+        persist(CapacityDockProviderCredential(apiKey: trimmedToken, host: resolvedHost))
+    }
+
+    private func persist(_ credential: CapacityDockProviderCredential) {
         isSaving = true
         errorText = nil
         Task {
             defer { isSaving = false }
             do {
                 try await CapacityDockProviderCredentialStore.saveAsync(
-                    CapacityDockProviderCredential(apiKey: raw),
+                    credential,
                     for: CopilotSubscriptionService.providerID
                 )
                 token = ""
+                if credential.isEmpty { host = CopilotHostEndpoint.defaultHost }
                 CopilotSubscriptionService.resetProbeCache()
                 await store.connectCopilot()
             } catch {
@@ -1537,7 +1588,8 @@ private struct CopilotConnectionRow: View {
         case .transientFailure: return store.copilotError ?? L("GitHub rate-limited; auto-retrying.")
         case .bootstrapping: return L("Looking for a GitHub token on this Mac.")
         case .loading: return L("Background refresh in progress.")
-        case .dormant: return L("Tap Load Quota to fetch live usage from api.github.com.")
+        case .dormant:
+            return CopilotQuotaPresentation.dormantSettingsDetail(apiHost: store.copilotUsage?.apiHost)
         case .notBootstrapped:
             return CopilotQuotaPresentation.settingsNotConnectedDetail(
                 explicitlyDisconnected: CopilotExplicitDisconnect.isSet(defaults: store.copilotQuotaRuntime.defaults)
@@ -1958,7 +2010,7 @@ private struct GenericProviderConnectionSections: View {
         switch summary.connection {
         case .connected: return L("Connected")
         case .loading: return L("Connecting…")
-        case .stale: return L("Refreshing…")
+        case .stale: return store.quotaRefreshIsInFlight(for: provider) ? L("Refreshing…") : L("Connected")
         case .transientFailure: return L("Retrying")
         case .terminalFailure: return L("Reconnect required")
         case .disconnected: return L("Not connected")
