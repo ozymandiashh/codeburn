@@ -933,7 +933,11 @@ function AppMain() {
               {section === 'overview' ? (
                 <OverviewContent period={period} provider={provider} range={customRange} overview={overview} onNavigate={navigate} onInvestigate={investigate} ready={ready} scope={scope} headlineSnapshot={headlineSnapshot} />
               ) : section === 'sessions' ? (
-                <Sessions period={period} provider={provider} range={customRange} refreshToken={refreshToken} detectedProviders={visibleProviderEntries} onProviderChange={onProviderSelect} ready={ready} filters={filters} onFiltersChange={next => commitNav({ filters: next })} openSessionId={openSessionId} onSessionOpen={key => commitNav({ sessionId: key })} onSessionClose={() => commitNav({ sessionId: null })} sort={nav.sort as SessionSort} onSortChange={value => commitNav({ sort: value })} visibleCount={nav.visibleCount} onVisibleCountChange={value => commitNav({ visibleCount: value })} />
+                // A new sort or a changed selection reorders the whole list, so
+                // the pagination depth resets IN THE SAME commit — one history
+                // entry, and the depth a Back/Forward restores stays whatever it
+                // was when that position was committed.
+                <Sessions period={period} provider={provider} range={customRange} refreshToken={refreshToken} detectedProviders={visibleProviderEntries} onProviderChange={onProviderSelect} ready={ready} filters={filters} onFiltersChange={next => commitNav({ filters: next, visibleCount: INITIAL_VISIBLE })} openSessionId={openSessionId} onSessionOpen={key => commitNav({ sessionId: key })} onSessionClose={() => commitNav({ sessionId: null })} sort={nav.sort as SessionSort} onSortChange={value => commitNav({ sort: value, visibleCount: INITIAL_VISIBLE })} visibleCount={nav.visibleCount} onVisibleCountChange={value => commitNav({ visibleCount: value })} />
               ) : section === 'pullRequests' ? (
                 <PullRequestsContent overview={overview} period={period} provider={provider} range={customRange} onInvestigate={investigate} />
               ) : section === 'spend' ? (

@@ -251,7 +251,14 @@ export function Sessions({
   }, [investigating, searched, selection.unattributable])
   const included = summary.included
 
+  // Back to the first page when the list is reordered or re-populated under the
+  // reader. This writes the INTERNAL depth, so it applies to the uncontrolled
+  // wiring only: a parent that owns visibleCount (the app, which keeps it in the
+  // nav history) resets it in the same commit as the sort/selection change it
+  // owns. Pushing a reset from here would fire on a Back/Forward restore too,
+  // discarding the depth that was just restored.
   useEffect(() => {
+    if (controlledVisibleCount !== undefined) return
     setInternalVisibleCount(INITIAL_VISIBLE)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterKey, sort, report.data, q])
