@@ -52,6 +52,7 @@ const FILE_PROVIDERS: Record<string, string[]> = {
   'kimi.ts': ['kimi'],
   'kiro.ts': ['kiro'],
   'mistral-vibe.ts': ['mistral-vibe'],
+  'muse-code.ts': ['muse-code'],
   'mux.ts': ['mux'],
   'qwen.ts': ['qwen'],
   'ibm-bob.ts': ['ibm-bob'],

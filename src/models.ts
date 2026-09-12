@@ -35,7 +35,11 @@ export type ModelCosts = {
 /// bills the full output, so adding reasoning on top bills it twice.
 /// DSH TokenUsage includes reasoning in output too; see the pinned contract:
 /// https://github.com/deepseek-ai/deepseek-harness/blob/c291e7961a515f6d7af9304e7fd1d257929aef26/docs/subsystems/llm-streaming.md#tokenusage
-const REASONING_INCLUDED_IN_OUTPUT = new Set(['claude', 'codex', 'copilot', 'dsh'])
+/// Muse Code: Meta's own MSP wire schema, exported from the `muse` binary with
+/// `muse schema generate-json-schema`, defines TokenUsage.reasoningTokens as
+/// "Output tokens spent on reasoning, when the provider reports it" (tdd
+/// SS4.6.5), so reasoning is already inside outputTokens there too.
+const REASONING_INCLUDED_IN_OUTPUT = new Set(['claude', 'codex', 'copilot', 'dsh', 'muse-code'])
 
 /// Output tokens to bill and display for one call. Single source of truth so
 /// the pricing sites and the display sums can never disagree about whether a

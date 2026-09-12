@@ -178,6 +178,21 @@ async function loadZcode(): Promise<Provider | null> {
   }
 }
 
+let museCodeProvider: Provider | null = null
+let museCodeLoadAttempted = false
+
+async function loadMuseCode(): Promise<Provider | null> {
+  if (museCodeLoadAttempted) return museCodeProvider
+  museCodeLoadAttempted = true
+  try {
+    const { museCode } = await import('./muse-code.js')
+    museCodeProvider = museCode
+    return museCode
+  } catch {
+    return null
+  }
+}
+
 let zedProvider: Provider | null = null
 let zedLoadAttempted = false
 
@@ -197,7 +212,7 @@ const coreProviders: Provider[] = [claude, cline, clineCli, codewhale, codebuff,
 
 // Lazily loaded providers, listed by name so --provider validation works even
 // when an optional module fails to load. Must stay in sync with getAllProviders.
-const lazyProviderNames = ['antigravity', 'forge', 'goose', 'cursor', 'opencode', 'cursor-agent', 'crush', 'warp', 'vercel-gateway', 'zcode', 'zed']
+const lazyProviderNames = ['antigravity', 'forge', 'goose', 'cursor', 'opencode', 'cursor-agent', 'crush', 'muse-code', 'warp', 'vercel-gateway', 'zcode', 'zed']
 
 // Display names for lazy providers. Must match the `displayName` on the
 // loaded Provider object; `providerDisplayName` + getAllProviders() test
@@ -210,6 +225,7 @@ const lazyProviderDisplayNames: Record<string, string> = {
   opencode: 'OpenCode',
   'cursor-agent': 'Cursor Agent',
   crush: 'Crush',
+  'muse-code': 'Muse Code',
   warp: 'Warp',
   'vercel-gateway': 'Vercel AI Gateway',
   zcode: 'ZCode',
@@ -235,8 +251,8 @@ export function allProviderNames(): readonly string[] {
 }
 
 export async function getAllProviders(): Promise<Provider[]> {
-  const [ag, forge, gs, cursor, opencode, cursorAgent, crush, warp, vercelGw, zc, zd] = await Promise.all([
-    loadAntigravity(), loadForge(), loadGoose(), loadCursor(), loadOpenCode(), loadCursorAgent(), loadCrush(), loadWarp(), loadVercelGateway(), loadZcode(), loadZed(),
+  const [ag, forge, gs, cursor, opencode, cursorAgent, crush, museCode, warp, vercelGw, zc, zd] = await Promise.all([
+    loadAntigravity(), loadForge(), loadGoose(), loadCursor(), loadOpenCode(), loadCursorAgent(), loadCrush(), loadMuseCode(), loadWarp(), loadVercelGateway(), loadZcode(), loadZed(),
   ])
   const all = [...coreProviders]
   if (ag) all.push(ag)
@@ -246,6 +262,7 @@ export async function getAllProviders(): Promise<Provider[]> {
   if (opencode) all.push(opencode)
   if (cursorAgent) all.push(cursorAgent)
   if (crush) all.push(crush)
+  if (museCode) all.push(museCode)
   if (warp) all.push(warp)
   if (vercelGw) all.push(vercelGw)
   if (zc) all.push(zc)
@@ -341,6 +358,10 @@ export async function getProvider(name: string): Promise<Provider | undefined> {
   if (name === 'crush') {
     const c = await loadCrush()
     return c ?? undefined
+  }
+  if (name === 'muse-code') {
+    const mc = await loadMuseCode()
+    return mc ?? undefined
   }
   if (name === 'warp') {
     const w = await loadWarp()
