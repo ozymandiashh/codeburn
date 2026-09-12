@@ -1010,6 +1010,18 @@ private let newerRecord = decodedHistory("2026-09-13T11:30:00Z", resets: 4)
     #expect(CodexResetForecastNotificationPreference.isEnabled(defaults: defaults) == false)
 }
 
+/// Records what the fake transport was handed. An actor, not a captured `var`:
+/// the transport closure is `@Sendable`, so mutating a local from inside it is
+/// a data race and Swift 6 rejects it outright. This host cannot compile the
+/// test target at all, so the class of bug is invisible here and was caught by
+/// CI; the harness now runs `-strict-concurrency=complete` for that reason.
+private actor TransportRecorder {
+    private(set) var requests: [URLRequest] = []
+    func record(_ request: URLRequest) { requests.append(request) }
+    var count: Int { requests.count }
+    var last: URLRequest? { requests.last }
+}
+
 /// A store that starts empty and records what it is asked to keep.
 private actor RecordingCacheStore: CodexResetHistoryCacheStoring {
     private var held: CodexResetHistoryCache?
@@ -1021,23 +1033,24 @@ private actor RecordingCacheStore: CodexResetHistoryCacheStoring {
 }
 
 @Test func theSwitchBeingOffMeansNoRequestAndTheBundledRecord() async {
-    var requests = 0
-    let fetcher = CodexResetHistoryFetcher(store: RecordingCacheStore()) { _ in
-        requests += 1
+    let recorder = TransportRecorder()
+    let fetcher = CodexResetHistoryFetcher(store: RecordingCacheStore()) { request in
+        await recorder.record(request)
         return (Data(), URLResponse())
     }
     let resolution = await fetcher.refreshIfDue(bundled: bundledRecord, enabled: false, now: fetchNow)
-    #expect(requests == 0)
+    #expect(await recorder.count == 0)
     #expect(resolution.source == .bundled)
 }
 
 @Test func theRequestCarriesNothingAboutTheUser() async {
-    var seen: URLRequest?
+    let recorder = TransportRecorder()
     let fetcher = CodexResetHistoryFetcher(store: RecordingCacheStore()) { request in
-        seen = request
+        await recorder.record(request)
         return (Data(), HTTPURLResponse(url: request.url!, statusCode: 304, httpVersion: nil, headerFields: nil)!)
     }
     _ = await fetcher.refreshIfDue(bundled: bundledRecord, enabled: true, now: fetchNow)
+    let seen = await recorder.last
     let headers = seen?.allHTTPHeaderFields ?? [:]
     #expect(Set(headers.keys) == ["Accept", "User-Agent"])
     #expect(headers["Accept"] == "application/vnd.github.raw+json")
@@ -1047,14 +1060,13 @@ private actor RecordingCacheStore: CodexResetHistoryCacheStoring {
 
 @Test func aNetworkFailureIsRecordedAsAnAttemptAndNotRetriedImmediately() async {
     struct Offline: Error {}
-    var requests = 0
-    let store = RecordingCacheStore()
-    let fetcher = CodexResetHistoryFetcher(store: store) { _ in
-        requests += 1
+    let recorder = TransportRecorder()
+    let fetcher = CodexResetHistoryFetcher(store: RecordingCacheStore()) { request in
+        await recorder.record(request)
         throw Offline()
     }
     let first = await fetcher.refreshIfDue(bundled: bundledRecord, enabled: true, now: fetchNow)
     #expect(first.source == .bundled)
     _ = await fetcher.refreshIfDue(bundled: bundledRecord, enabled: true, now: fetchNow.addingTimeInterval(60))
-    #expect(requests == 1)
+    #expect(await recorder.count == 1)
 }

@@ -42,6 +42,30 @@ export const SNAPSHOT_ONLY_ENV = 'CODEBURN_PRICING_SNAPSHOT_ONLY'
 
 export const CACHE_FILENAME = 'codex-reset-history-fetched.json'
 
+/** Ceiling on each cache read and write. The cache is a convenience — it saves a
+ *  request an hour from now — so it is never worth making anyone wait on it. A
+ *  filesystem that answers slowly, or not at all, must degrade to "no cache",
+ *  not to a hung command: `codeburn quota` blocks the macOS menubar on its exit,
+ *  and an unwritable or pathological cache directory (a read-only mount, a
+ *  synthetic filesystem such as procfs, a stalled network mount) must not be
+ *  able to wedge it. */
+export const CACHE_IO_TIMEOUT_MS = 2000
+
+/** Runs `work`, giving up with `fallback` after `timeoutMs`. The timer is
+ *  unref'd so it can never hold a CLI process open. */
+async function withDeadline<T>(work: () => Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<T>(resolve => {
+    timer = setTimeout(() => resolve(fallback), timeoutMs)
+    timer.unref?.()
+  })
+  try {
+    return await Promise.race([work().catch(() => fallback), expired])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 type CacheRecord = {
   /** When the last request was made, successful or not. Gates the hourly retry. */
   attemptedAt: number
@@ -71,6 +95,10 @@ function cachePath(cacheDir: string): string {
 }
 
 async function readCache(cacheDir: string): Promise<CacheRecord | null> {
+  return withDeadline(() => readCacheUnbounded(cacheDir), CACHE_IO_TIMEOUT_MS, null)
+}
+
+async function readCacheUnbounded(cacheDir: string): Promise<CacheRecord | null> {
   try {
     const parsed = JSON.parse(await readFile(cachePath(cacheDir), 'utf-8')) as CacheRecord
     if (!parsed || typeof parsed.attemptedAt !== 'number') return null
@@ -86,13 +114,13 @@ async function readCache(cacheDir: string): Promise<CacheRecord | null> {
 }
 
 async function writeCache(cacheDir: string, record: CacheRecord): Promise<void> {
-  try {
+  // An unwritable cache costs a request an hour from now. It is not an error
+  // anyone can act on, it must not fail the command, and it must not delay it:
+  // whatever the filesystem does, the caller gets its answer.
+  await withDeadline(async () => {
     await mkdir(cacheDir, { recursive: true })
     await writeFile(cachePath(cacheDir), JSON.stringify(record), 'utf-8')
-  } catch {
-    // An unwritable cache costs a request an hour from now. It is not an error
-    // anyone can act on, and it must not fail the command.
-  }
+  }, CACHE_IO_TIMEOUT_MS, undefined)
 }
 
 function generatedAtMs(history: ResetHistory | undefined): number {

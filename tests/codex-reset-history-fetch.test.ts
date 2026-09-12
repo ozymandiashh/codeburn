@@ -1,10 +1,11 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import {
   CACHE_FILENAME,
+  CACHE_IO_TIMEOUT_MS,
   FETCH_MIN_INTERVAL_MS,
   RESET_HISTORY_HOST,
   RESET_HISTORY_URL,
@@ -263,11 +264,51 @@ describe('the hourly reset-history refresh', () => {
     expect(load.source).toBe('bundled')
   })
 
-  it('survives an unwritable cache directory', async () => {
-    const load = await loadResetHistory({
-      bundled: BUNDLED, now: NOW, cacheDir: '/proc/definitely/not/writable', env: {},
-      fetchImpl: responder([], () => ({ status: 200, body: JSON.stringify(NEWER) })),
-    })
-    expect(load.source).toBe('fetched')
+  it('survives an unwritable cache directory, and does not wait on it', async ctx => {
+    // A real directory this user genuinely cannot write to, not a magic path:
+    // `/proc/...` behaves differently on every platform, and on the Linux CI
+    // runner it did not fail at all - it never returned, and the test sat there
+    // for the full 30s timeout. Root ignores the mode bits, and Windows does
+    // not have them, so the precondition is established before it is relied on
+    // and the test says why it skipped otherwise.
+    if (process.platform === 'win32' || process.getuid?.() === 0) {
+      ctx.skip('needs POSIX mode bits and a non-root user')
+    }
+    const parent = await sandbox()
+    const dir = join(parent, 'locked')
+    await chmod(parent, 0o500)
+    let established = false
+    try {
+      await writeFile(join(dir, 'probe'), 'x')
+    } catch {
+      established = true
+    }
+    if (!established) {
+      await chmod(parent, 0o700)
+      ctx.skip('could not make a directory unwritable on this filesystem')
+    }
+
+    try {
+      const started = Date.now()
+      const load = await loadResetHistory({
+        bundled: BUNDLED, now: NOW, cacheDir: dir, env: {},
+        fetchImpl: responder([], () => ({ status: 200, body: JSON.stringify(NEWER) })),
+      })
+      // The observable outcome: an answer, from the fetch, with no throw - and
+      // promptly. The cache write failed and nobody had to care.
+      expect(load.source).toBe('fetched')
+      expect(load.generatedAt).toBe(NEWER.generated_at)
+      expect(Date.now() - started).toBeLessThan(CACHE_IO_TIMEOUT_MS)
+    } finally {
+      await chmod(parent, 0o700)
+    }
+  })
+
+  it('answers even when the cache directory never responds at all', () => {
+    // The failure mode the CI hang actually was: not an error, but silence.
+    // Bounded rather than trusted, because a synthetic or stalled filesystem is
+    // not obliged to return.
+    expect(CACHE_IO_TIMEOUT_MS).toBeGreaterThan(0)
+    expect(CACHE_IO_TIMEOUT_MS).toBeLessThanOrEqual(5000)
   })
 })
