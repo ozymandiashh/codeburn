@@ -1,0 +1,318 @@
+{
+  "schema": 1,
+  "source": "https://codex-reset.com/api/timeline",
+  "source_name": "codex-reset.com",
+  "source_note": "Public community tracker of OpenAI Codex usage-limit resets. Not operated by or endorsed by OpenAI. Only event ids, timestamps and a reset kind are kept; no post text is copied or redistributed.",
+  "generated_at": "2026-09-12T20:52:51Z",
+  "events": [
+    {
+      "id": "1968163721034994139",
+      "announced_at": "2025-09-17T04:02:52Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "1986166501435711936",
+      "announced_at": "2025-11-05T20:19:29Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "1992370994028388670",
+      "announced_at": "2025-11-22T23:13:56Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "1995988609896513743",
+      "announced_at": "2025-12-02T22:49:02Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2001114683047317723",
+      "announced_at": "2025-12-17T02:18:14Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2002137269134819610",
+      "announced_at": "2025-12-19T22:01:37Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2028649088594436225",
+      "announced_at": "2026-03-03T01:50:07Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2029308599835738218",
+      "announced_at": "2026-03-04T21:30:47Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2030474136024400173",
+      "announced_at": "2026-03-08T02:42:13Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2031216405266481489",
+      "announced_at": "2026-03-10T03:51:43Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2031605592352313567",
+      "announced_at": "2026-03-11T05:38:13Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2037346989244096581",
+      "announced_at": "2026-03-27T01:52:28Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2039248564967424483",
+      "announced_at": "2026-04-01T07:48:39Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2046367145588916687",
+      "announced_at": "2026-04-20T23:15:21Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2055707616605835333",
+      "announced_at": "2026-05-16T17:51:03Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2058280452851638313",
+      "announced_at": "2026-05-23T20:14:35Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2061106703446450392",
+      "announced_at": "2026-05-31T15:25:06Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2062329981548802523",
+      "announced_at": "2026-06-04T00:25:58Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2067399435009622521",
+      "announced_at": "2026-06-18T00:10:10Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2070653282440405046",
+      "announced_at": "2026-06-26T23:39:48Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2071381664853319742",
+      "announced_at": "2026-06-28T23:54:07Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2071740419030053227",
+      "announced_at": "2026-06-29T23:39:41Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2075330198887940337",
+      "announced_at": "2026-07-09T21:24:11Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2075641131002700120",
+      "announced_at": "2026-07-10T17:59:43Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2075820987833274448",
+      "announced_at": "2026-07-11T05:54:25Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2076418567143408112",
+      "announced_at": "2026-07-12T21:28:59Z",
+      "type": "credits"
+    },
+    {
+      "id": "2076735790567338203",
+      "announced_at": "2026-07-13T18:29:31Z",
+      "type": "credits"
+    },
+    {
+      "id": "2077114635308986427",
+      "announced_at": "2026-07-14T19:34:54Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2077607697487188198",
+      "announced_at": "2026-07-16T04:14:09Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2078320950488297917",
+      "announced_at": "2026-07-18T03:28:22Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2079609157934886975",
+      "announced_at": "2026-07-21T16:47:15Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2081096447718723984",
+      "announced_at": "2026-07-25T19:17:12.695Z",
+      "type": "reset",
+      "reset_kind": "hard"
+    },
+    {
+      "id": "2081940052154933696",
+      "announced_at": "2026-07-28T03:09:23.666Z",
+      "type": "reset",
+      "reset_kind": "hard"
+    },
+    {
+      "id": "2083395449814229287",
+      "announced_at": "2026-08-01T03:32:37.508Z",
+      "type": "reset",
+      "reset_kind": "hard"
+    },
+    {
+      "id": "2086188036493344823",
+      "announced_at": "2026-08-08T20:29:22.056Z",
+      "type": "reset",
+      "reset_kind": "hard"
+    },
+    {
+      "id": "2086972802457063486",
+      "announced_at": "2026-08-11T00:27:44.842Z",
+      "type": "reset",
+      "reset_kind": "hard"
+    },
+    {
+      "id": "2087706104814023111",
+      "announced_at": "2026-08-13T01:01:37Z",
+      "type": "reset",
+      "reset_kind": "hard"
+    },
+    {
+      "id": "2090766694897619318",
+      "announced_at": "2026-08-21T11:43:19Z",
+      "type": "credits"
+    },
+    {
+      "id": "2090947196107764189",
+      "announced_at": "2026-08-21T23:40:34Z",
+      "type": "credits"
+    },
+    {
+      "id": "2090964822422949999",
+      "announced_at": "2026-08-22T00:50:36Z",
+      "type": "credits"
+    },
+    {
+      "id": "2091688655828246890",
+      "announced_at": "2026-08-24T00:46:51Z",
+      "type": "reset",
+      "reset_kind": "hard"
+    },
+    {
+      "id": "2092311059197808936",
+      "announced_at": "2026-08-25T14:15:00Z",
+      "type": "reset",
+      "reset_kind": "hard"
+    },
+    {
+      "id": "2094144275957350900",
+      "announced_at": "2026-08-30T19:24:37Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2094252447271366730",
+      "announced_at": "2026-08-31T02:34:27Z",
+      "type": "reset",
+      "reset_kind": "hard"
+    },
+    {
+      "id": "2095651088502591861",
+      "announced_at": "2026-09-03T23:12:09Z",
+      "type": "credits"
+    },
+    {
+      "id": "2095979536043401428",
+      "announced_at": "2026-09-04T20:57:17Z",
+      "type": "credits"
+    },
+    {
+      "id": "2096035437299237298",
+      "announced_at": "2026-09-05T00:39:25Z",
+      "type": "credits"
+    },
+    {
+      "id": "2096100688241873129",
+      "announced_at": "2026-09-05T04:58:42Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2097043464538264003",
+      "announced_at": "2026-09-08T01:34:00Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2097174560412246215",
+      "announced_at": "2026-09-08T04:05:53Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2097752790177370535",
+      "announced_at": "2026-09-09T18:23:34Z",
+      "type": "credits"
+    },
+    {
+      "id": "2098612714704891959",
+      "announced_at": "2026-09-12T03:20:36Z",
+      "type": "reset",
+      "reset_kind": "global"
+    },
+    {
+      "id": "2098685367058612394",
+      "announced_at": "2026-09-12T08:09:17Z",
+      "type": "reset",
+      "reset_kind": "global"
+    }
+  ]
+}

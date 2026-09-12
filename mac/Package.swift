@@ -18,7 +18,13 @@ let package = Package(
             name: "CodeBurnMenubar",
             path: "Sources/CodeBurnMenubar",
             resources: [
-                .process("Resources/ProviderIcons")
+                .process("Resources/ProviderIcons"),
+                // The Codex reset history the forecast reads. A byte-identical
+                // copy of src/data/codex-reset-history.json, because SwiftPM
+                // resources must live inside the target directory; the refresh
+                // workflow writes both and a test pins them together. `.copy`
+                // rather than `.process` so the JSON is never rewritten.
+                .copy("Resources/CodexResetHistory")
             ],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")

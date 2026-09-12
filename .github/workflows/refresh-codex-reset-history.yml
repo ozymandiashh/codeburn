@@ -1,0 +1,134 @@
+name: Refresh Codex reset history
+
+# The Codex reset forecast reads a dataset committed to this repo. This is the
+# only thing that refreshes it. #725 forbids new network polling in the client;
+# the maintainer's exception is exactly this and nothing wider:
+#
+#   the dataset is refreshed by a GitHub Action in the repo, never by the
+#   client at runtime.
+#
+# Source: https://codex-reset.com/api/timeline, a public community tracker that
+# is not operated by or endorsed by OpenAI. Only event ids, timestamps, the
+# event type and a reset kind are kept; every text field is dropped by
+# scripts/refresh-codex-reset-history.mjs and never reaches the repo.
+
+on:
+  schedule:
+    # Every six hours. The record has never moved faster than a couple of
+    # events a day, so this is comfortably ahead of it without being chatty.
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: refresh-codex-reset-history
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    # Scheduled runs only on the default branch; a fork's schedule has nothing
+    # to refresh and no branch to publish to.
+    if: github.repository == 'getagentseal/codeburn'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Fetch and normalize the timeline
+        run: node scripts/refresh-codex-reset-history.mjs
+
+      - name: Check the dataset the client will actually read
+        # The refresh script validates its own output; this runs the client's
+        # parser over the written file so a dataset that validates but that the
+        # forecast cannot use never reaches a pull request.
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs'
+          const canonical = readFileSync('src/data/codex-reset-history.json', 'utf8')
+          const bundled = readFileSync('mac/Sources/CodeBurnMenubar/Resources/CodexResetHistory/codex-reset-history.json', 'utf8')
+          if (canonical !== bundled) throw new Error('The CLI dataset and the menubar copy differ.')
+          const doc = JSON.parse(canonical)
+          const resets = doc.events.filter(e => e.type === 'reset')
+          if (resets.length < 2) throw new Error(`Only ${resets.length} resets.`)
+          const times = resets.map(e => Date.parse(e.announced_at))
+          for (let i = 1; i < times.length; i += 1) {
+            if (!(times[i] > times[i - 1])) throw new Error(`Reset timestamps are not increasing at index ${i}.`)
+          }
+          console.log(`${doc.events.length} events, ${resets.length} resets, newest ${resets[resets.length - 1].announced_at}.`)
+          NODE
+
+      - name: Publish the update as a pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: chore/codex-reset-history
+          BASE: ${{ github.event.repository.default_branch }}
+          SERVER: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add src/data/codex-reset-history.json \
+                  mac/Sources/CodeBurnMenubar/Resources/CodexResetHistory/codex-reset-history.json
+          if git diff --cached --quiet; then
+            echo "No new reset events; nothing to publish."
+            exit 0
+          fi
+
+          # Never main. A rolling branch plus a pull request, so the record that
+          # feeds a user-facing probability is reviewed like any other change.
+          git switch -C "$BRANCH"
+          git commit -m "chore(data): refresh Codex reset history"
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
+            git fetch origin "$BRANCH"
+            git push --force-with-lease origin "HEAD:refs/heads/${BRANCH}"
+          else
+            git push -u origin "HEAD:refs/heads/${BRANCH}"
+          fi
+
+          summary=$(node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs'
+          const doc = JSON.parse(readFileSync('src/data/codex-reset-history.json', 'utf8'))
+          const resets = doc.events.filter(e => e.type === 'reset')
+          const credits = doc.events.filter(e => e.type === 'credits')
+          console.log(`${resets.length} resets and ${credits.length} credit grants, newest ${doc.events[doc.events.length - 1].announced_at}.`)
+          NODE
+          )
+
+          body=$(printf '%s\n' \
+            "Scheduled refresh of the Codex reset history that \`codeburn quota\`'s reset forecast reads." \
+            "" \
+            "$summary" \
+            "" \
+            "Source: https://codex-reset.com/api/timeline — a public community tracker, not operated by or endorsed by OpenAI. Only event ids, timestamps, the event type and a reset kind are kept; every text field is dropped before anything is written." \
+            "" \
+            "The client never fetches this. It reads the committed file only.")
+
+          # An existing pull request is updated by the push above; only its body
+          # needs refreshing. Creating one can be disabled org-wide, so a
+          # failure here falls back to the comparison URL rather than failing
+          # the run and losing the pushed branch.
+          if existing=$(gh pr list --head "$BRANCH" --base "$BASE" --state open --json number --jq '.[0].number') && [ -n "$existing" ]; then
+            gh pr edit "$existing" --body "$body" || true
+            echo "Updated pull request #${existing}." >> "$GITHUB_STEP_SUMMARY"
+          elif gh pr create --base "$BASE" --head "$BRANCH" --title "chore(data): refresh Codex reset history" --body "$body"; then
+            echo "Opened a pull request from \`${BRANCH}\`." >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## Codex reset history updated"
+              echo
+              echo "The branch \`${BRANCH}\` was pushed, but this workflow could not open a pull request (Actions may be barred from creating them in this organization). Open it from the comparison URL below."
+              echo
+              echo "[Open pull request](${SERVER}/${REPOSITORY}/compare/${BASE}...${BRANCH}?expand=1)"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
