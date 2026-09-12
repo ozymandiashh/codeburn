@@ -61,23 +61,28 @@ struct EarlyQuotaResetEvent: Codable, Equatable, Sendable {
 
     var notificationTitle: String {
         switch signal {
-        case .resetMovedForward: "\(providerName) quota reset early"
-        case .usageDropped: "\(providerName) quota cleared early"
+        case .resetMovedForward: L("%@ quota reset early", providerName)
+        case .usageDropped: L("%@ quota cleared early", providerName)
         }
     }
 
     var notificationBody: String {
         let lead = EarlyQuotaResetFormat.lead(seconds: earlyBySeconds)
-        let back = "You're back to \(Int((100 - percentAfter).rounded()))%."
+        let back = L("You're back to %lld%%.", Int((100 - percentAfter).rounded()))
         switch signal {
         case .resetMovedForward:
-            return "\(providerName)'s \(windowName) reset \(lead) early. \(back)"
+            return L(
+                "%@'s %@ reset %@ early. %@",
+                providerName, EarlyQuotaResetFormat.limitName(windowName), lead, back
+            )
         // The reset time did not move: the vendor emptied the counter inside the
         // cycle, which still ends when it always would have. Saying "reset early"
         // here would promise a whole new window that is not coming.
         case .usageDropped:
-            return "\(providerName) cleared your \(EarlyQuotaResetFormat.usageName(windowName)) "
-                + "\(lead) before its reset. \(back)"
+            return L(
+                "%@ cleared your %@ %@ before its reset. %@",
+                providerName, EarlyQuotaResetFormat.usageName(windowName), lead, back
+            )
         }
     }
 
@@ -86,22 +91,34 @@ struct EarlyQuotaResetEvent: Codable, Equatable, Sendable {
         let lead = EarlyQuotaResetFormat.lead(seconds: earlyBySeconds)
         switch signal {
         case .resetMovedForward:
-            return "\(EarlyQuotaResetFormat.capitalizedFirst(windowName)) reset \(lead) early"
+            return L(
+                "%@ reset %@ early",
+                EarlyQuotaResetFormat.capitalizedFirst(EarlyQuotaResetFormat.limitName(windowName)),
+                lead
+            )
         case .usageDropped:
             let usage = EarlyQuotaResetFormat.usageName(windowName)
-            return "\(EarlyQuotaResetFormat.capitalizedFirst(usage)) cleared, \(lead) before reset"
+            return L("%@ cleared, %@ before reset", EarlyQuotaResetFormat.capitalizedFirst(usage), lead)
         }
     }
 
     var noticeHelpText: String {
         let lead = EarlyQuotaResetFormat.lead(seconds: earlyBySeconds)
-        let available = "\(Int((100 - percentAfter).rounded()))% of it was available when CodeBurn noticed."
+        let available = L(
+            "%lld%% of it was available when CodeBurn noticed.",
+            Int((100 - percentAfter).rounded())
+        )
         switch signal {
         case .resetMovedForward:
-            return "\(providerName) reset this \(windowName) \(lead) before its scheduled time. \(available)"
+            return L(
+                "%@ reset this %@ %@ before its scheduled time. %@",
+                providerName, EarlyQuotaResetFormat.limitName(windowName), lead, available
+            )
         case .usageDropped:
-            return "\(providerName) cleared this \(EarlyQuotaResetFormat.usageName(windowName)) "
-                + "\(lead) before the window's scheduled reset, which has not moved. \(available)"
+            return L(
+                "%@ cleared this %@ %@ before the window's scheduled reset, which has not moved. %@",
+                providerName, EarlyQuotaResetFormat.usageName(windowName), lead, available
+            )
         }
     }
 }
@@ -254,12 +271,15 @@ enum EarlyQuotaResetHistory {
             let noun = EarlyQuotaResetFormat.windowNoun(windowName)
             let lead = EarlyQuotaResetFormat.approximateLead(seconds: typicalEarlyBySeconds)
             if earlyResets == 1 && observedResets == 1 {
-                return "Last \(noun) reset came ~\(lead) early"
+                return L("Last %@ reset came ~%@ early", noun, lead)
             }
             if earlyResets == observedResets {
-                return "Last \(earlyResets) \(noun) resets came ~\(lead) early"
+                return L("Last %lld %@ resets came ~%@ early", earlyResets, noun, lead)
             }
-            return "\(earlyResets) of the last \(observedResets) \(noun) resets came ~\(lead) early"
+            return L(
+                "%lld of the last %lld %@ resets came ~%@ early",
+                earlyResets, observedResets, noun, lead
+            )
         }
     }
 
@@ -401,31 +421,65 @@ enum EarlyQuotaResetFormat {
     /// 1h57m reads "2h" rather than truncating to "1h".
     static func lead(seconds: TimeInterval) -> String {
         let seconds = max(0, seconds)
-        guard seconds >= 3600 else { return "\(max(Int((seconds / 60).rounded()), 1))m" }
+        guard seconds >= 3600 else { return L("%lldm", max(Int((seconds / 60).rounded()), 1)) }
         let hours = Int((seconds / 3600).rounded())
-        guard hours >= 24 else { return "\(hours)h" }
+        guard hours >= 24 else { return L("%lldh", hours) }
         let rest = hours % 24
-        return rest == 0 ? "\(hours / 24)d" : "\(hours / 24)d \(rest)h"
+        return rest == 0 ? L("%lldd", hours / 24) : L("%lldd %lldh", hours / 24, rest)
     }
 
     /// "18h", "2d" — rounded, for a pattern that is only ever approximate.
     static func approximateLead(seconds: TimeInterval) -> String {
         let hours = Int((max(0, seconds) / 3600).rounded())
-        if hours >= 48 { return "\(Int((seconds / 86400).rounded()))d" }
-        return "\(max(hours, 1))h"
+        if hours >= 48 { return L("%lldd", Int((seconds / 86400).rounded())) }
+        return L("%lldh", max(hours, 1))
+    }
+
+    /// The three grammatical forms the copy needs from a window label.
+    ///
+    /// `EarlyQuotaResetEvent.windowName` is persisted with the event, so it
+    /// stays the English name `claudeWindowName(forKey:)` produced and the
+    /// translation happens here, at render. Keyed on that English name rather
+    /// than by stripping `" limit"` off the end, which is a rule only English
+    /// obeys. A label outside the known set — a provider wired up later —
+    /// keeps the old suffix behaviour and reads through untranslated.
+
+    /// "weekly limit" -> "weekly limit": the cap itself.
+    static func limitName(_ name: String) -> String {
+        switch name {
+        case "5-hour limit": L("5-hour limit")
+        case "weekly limit": L("weekly limit")
+        case "Opus weekly limit": L("Opus weekly limit")
+        case "Sonnet weekly limit": L("Sonnet weekly limit")
+        default: name
+        }
     }
 
     /// "weekly limit" -> "weekly": the bare noun, for copy that supplies its own.
     static func windowNoun(_ name: String) -> String {
-        name.hasSuffix(" limit") ? String(name.dropLast(" limit".count)) : name
+        switch name {
+        case "5-hour limit": L("5-hour")
+        case "weekly limit": L("weekly")
+        case "Opus weekly limit": L("Opus weekly")
+        case "Sonnet weekly limit": L("Sonnet weekly")
+        default: name.hasSuffix(" limit") ? String(name.dropLast(" limit".count)) : name
+        }
     }
 
     /// "weekly limit" -> "weekly usage": what the vendor cleared, not the cap.
-    /// A noun that already says "usage" (Codex's "monthly usage limit") is left
-    /// alone rather than doubled.
+    /// A name outside the known set whose noun already says "usage" — Codex's
+    /// "monthly usage limit" — is left alone rather than doubled into
+    /// "monthly usage usage".
     static func usageName(_ name: String) -> String {
-        let noun = windowNoun(name)
-        return noun.hasSuffix("usage") ? noun : "\(noun) usage"
+        switch name {
+        case "5-hour limit": return L("5-hour usage")
+        case "weekly limit": return L("weekly usage")
+        case "Opus weekly limit": return L("Opus weekly usage")
+        case "Sonnet weekly limit": return L("Sonnet weekly usage")
+        default:
+            let noun = windowNoun(name)
+            return noun.hasSuffix("usage") ? noun : L("%@ usage", noun)
+        }
     }
 
     static func capitalizedFirst(_ text: String) -> String {

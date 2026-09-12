@@ -504,13 +504,13 @@ struct CapacityDockView: View {
         .clipShape(railShape)
         .contentShape(railShape)
         .contextMenu {
-            Menu("Dock to Edge") {
-                Button("Left") { onDock(.left) }
-                Button("Right") { onDock(.right) }
-                Button("Top") { onDock(.top) }
-                Button("Bottom") { onDock(.bottom) }
+            Menu(L("Dock to Edge")) {
+                Button(L("Left")) { onDock(.left) }
+                Button(L("Right")) { onDock(.right) }
+                Button(L("Top")) { onDock(.top) }
+                Button(L("Bottom")) { onDock(.bottom) }
             }
-            Button("Hide Capacity Dock", action: onHide)
+            Button(L("Hide Capacity Dock"), action: onHide)
         }
         .simultaneousGesture(
             DragGesture(minimumDistance: 3, coordinateSpace: .global)
@@ -518,7 +518,7 @@ struct CapacityDockView: View {
                 .onEnded { _ in onDragEnded() }
         )
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Capacity Dock")
+        .accessibilityLabel(L("Capacity Dock"))
     }
 
     private var contentAlignment: Alignment {
@@ -604,7 +604,7 @@ private struct CapacityDockProviderRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(provider.displayName) usage")
+        .accessibilityLabel(L("%@ usage", provider.displayName))
         .accessibilityValue(accessibilityValue)
         .accessibilityHint(accessibilityHint)
         // The gauge is the switch, and a click is a pointer gesture. Keyboard
@@ -624,21 +624,21 @@ private struct CapacityDockProviderRow: View {
     /// whichever window feeds it, so the window is the part a screen reader
     /// has to say out loud.
     private var accessibilityValue: String {
-        guard let headline else { return "Unknown" }
+        guard let headline else { return L("Unknown") }
         return "\(headline.label) \(headline.percentLabel)"
     }
 
     private var accessibilityHint: String {
         isSwitchable
-            ? "Click to switch between this provider's usage windows"
-            : "Click to keep Capacity Dock expanded"
+            ? L("Click to switch between this provider's usage windows")
+            : L("Click to keep Capacity Dock expanded")
     }
 
     private var switchActionName: String {
         let next = CapacityDockGlanceWindow.next(after: glanceWindow, quota: quota)
         let label = CapacityDockGlanceWindow.window(next, quota: quota)?.label
             ?? next.displayName
-        return "Show \(label) usage"
+        return L("Show %@ usage", label)
     }
 
     private var headlinePercentColor: Color {
@@ -944,7 +944,7 @@ struct CapacityDockDetailView: View {
     private func sessionsSection(_ sessions: [LiveSession]) -> some View {
         let s = model.detailScale
         VStack(alignment: .leading, spacing: 0) {
-            sectionCaption("Sessions", trailing: sessionsTrailing(sessions.count))
+            sectionCaption(L("Sessions"), trailing: sessionsTrailing(sessions.count))
             if !sessions.isEmpty {
                 ScrollView(.vertical) {
                     VStack(spacing: CapacityDockGlance.pillGap * s) {
@@ -966,9 +966,9 @@ struct CapacityDockDetailView: View {
 
     private func sessionsTrailing(_ count: Int) -> String {
         switch count {
-        case 0: return "none running"
-        case 1: return "1 running"
-        default: return "\(count) running"
+        case 0: return L("none running")
+        case 1: return L("1 running")
+        default: return L("%lld running", count)
         }
     }
 
@@ -1004,7 +1004,7 @@ struct CapacityDockDetailView: View {
                     )
                     .frame(height: 15 * s)
                     if let remaining = session.contextRemaining {
-                        Text("\(Double(remaining).asCompactTokens().lowercasedThousands()) left")
+                        Text(L("%@ left", Double(remaining).asCompactTokens().lowercasedThousands()))
                             .font(.system(size: 10))
                             .monospacedDigit()
                             .foregroundStyle(Color.capacityDockText.opacity(0.6))
@@ -1068,14 +1068,14 @@ struct CapacityDockDetailView: View {
     private func todaySection(_ today: ProviderDetail) -> some View {
         let s = model.detailScale
         VStack(alignment: .leading, spacing: 0) {
-            sectionCaption("Today", trailing: nil)
+            sectionCaption(L("Today"), trailing: nil)
             HStack(alignment: .center, spacing: 8 * s) {
                 HStack(alignment: .firstTextBaseline, spacing: 5 * s) {
                     Text(today.cost.asUSD())
                         .font(.system(size: 17, weight: .semibold))
                         .monospacedDigit()
                         .foregroundStyle(Color.capacityDockText)
-                    Text("burned")
+                    Text(L("burned"))
                         .font(.system(size: 11.5))
                         .foregroundStyle(Color.capacityDockText.opacity(0.6))
                 }
@@ -1092,7 +1092,7 @@ struct CapacityDockDetailView: View {
                     if let cacheRead = today.cacheReadTokens {
                         cacheReadLine(Double(cacheRead))
                     }
-                    Text("\(today.calls.asThousandsSeparated()) calls")
+                    Text(L("%@ calls", today.calls.asThousandsSeparated()))
                         .font(.system(size: 10))
                         .monospacedDigit()
                         .foregroundStyle(Color.capacityDockText.opacity(0.6))
@@ -1129,9 +1129,9 @@ struct CapacityDockDetailView: View {
     @ViewBuilder
     private func cacheReadLine(_ value: Double) -> some View {
         let s = model.detailScale
-        let explanation = "Input tokens reused from this provider's prompt cache today — "
-            + "not fresh input (arrow.down), not cache writes, and already priced at the "
-            + "cache-read rate inside the burned figure."
+        let explanation = L(
+            "Input tokens reused from this provider's prompt cache today — not fresh input (arrow.down), not cache writes, and already priced at the cache-read rate inside the burned figure."
+        )
         HStack(spacing: 4 * s) {
             Image(systemName: "arrow.triangle.2.circlepath")
                 .font(.system(size: 9, weight: .semibold))
@@ -1140,14 +1140,14 @@ struct CapacityDockDetailView: View {
                 .font(.system(size: 10.5))
                 .monospacedDigit()
                 .foregroundStyle(Color.capacityDockText)
-            Text("cache read")
+            Text(L("cache read"))
                 .font(.system(size: 9.5))
                 .foregroundStyle(Color.capacityDockText.opacity(0.6))
         }
         .frame(height: 13 * s)
         .help(explanation)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Cache read: \(value.asCompactTokens().lowercasedThousands()) tokens")
+        .accessibilityLabel(L("Cache read: %@ tokens", value.asCompactTokens().lowercasedThousands()))
         .accessibilityHint(explanation)
     }
 
@@ -1265,7 +1265,7 @@ struct CapacityDockDetailView: View {
                 )
                 .padding(.top, 2 * scale)
                 .help(window.label)
-                .accessibilityLabel("Quota window " + window.label)
+                .accessibilityLabel(L("Quota window %@", window.label))
             Text(window.resetsInLabel)
                 .font(.system(size: 10 * scale))
                 .monospacedDigit()
@@ -1281,7 +1281,7 @@ struct CapacityDockDetailView: View {
                     alignment: alignment == .leading ? .leading : .center
                 )
                 .padding(.top, 2 * scale)
-                .accessibilityLabel("Resets " + window.resetsInLabel)
+                .accessibilityLabel(L("Resets %@", window.resetsInLabel))
             if hasPaceSlot {
                 paceCaption(paceLine)
                     .frame(
@@ -1331,7 +1331,7 @@ struct CapacityDockDetailView: View {
     private func budgetLine() -> some View {
         let spend = store.capacityDockToday?.cost ?? 0
         let budget = store.activeDailyBudget
-        Text(budget > 0 ? "today \(spend.asUSD()) of \(budget.asUSD())" : "no budget set")
+        Text(budget > 0 ? L("today %@ of %@", spend.asUSD(), budget.asUSD()) : L("no budget set"))
             .font(.system(size: 11))
             .monospacedDigit()
             .foregroundStyle(Color.capacityDockText.opacity(0.6))
@@ -1359,26 +1359,26 @@ struct CapacityDockDetailView: View {
         case .connected:
             EmptyView()
         case .loading:
-            Text("Refreshing…")
+            Text(L("Refreshing…"))
                 .font(.system(size: 10))
                 .foregroundStyle(Color.capacityDockText.opacity(0.52))
         case .stale:
             Text(store.quotaRefreshIsInFlight(for: provider)
-                ? "Last known usage · refreshing"
-                : "Last known usage")
+                ? L("Last known usage · refreshing")
+                : L("Last known usage"))
                 .font(.system(size: 10))
                 .foregroundStyle(.yellow.opacity(0.82))
         case .transientFailure:
-            Text("Last known usage · retrying")
+            Text(L("Last known usage · retrying"))
                 .font(.system(size: 10))
                 .foregroundStyle(.orange.opacity(0.86))
         case .disconnected:
-            Text("Not connected")
+            Text(L("Not connected"))
                 .font(.system(size: 11))
                 .foregroundStyle(Color.capacityDockText.opacity(0.6))
         case .terminalFailure(let reason):
             VStack(alignment: .leading, spacing: 3 * model.detailScale) {
-                Text("Reconnect required")
+                Text(L("Reconnect required"))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.red)
                 if let reason, !reason.isEmpty {

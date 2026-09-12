@@ -90,8 +90,11 @@ enum QuotaPacePresentation {
             return Line(
                 kind: .exhausted,
                 tone: .danger,
-                text: "Limit reached",
-                helpText: "This window's limit is fully used. It resets in \(countdownLabel(seconds: remaining))."
+                text: L("Limit reached"),
+                helpText: L(
+                    "This window's limit is fully used. It resets in %@.",
+                    countdownLabel(seconds: remaining)
+                )
             )
         }
 
@@ -160,16 +163,20 @@ enum QuotaPacePresentation {
     static func caption(for result: QuotaPace.Result, windowSeconds: Int, now: Date = Date()) -> String {
         let compact = TimeInterval(windowSeconds) <= QuotaPace.etaSuppressionMaxSeconds
         if compact {
-            if abs(result.deltaPercent) <= 2 { return "On pace" }
-            if result.deltaPercent > 0 { return "\(Int(result.deltaPercent.rounded()))% in deficit" }
-            return "\(Int(-result.deltaPercent.rounded()))% in reserve"
+            if abs(result.deltaPercent) <= 2 { return L("On pace") }
+            // Same two keys the Plan tab's stage caption uses, so a stage never
+            // reads one way in the dock and another in the popover.
+            if result.deltaPercent > 0 {
+                return L("%@%% in deficit", String(Int(result.deltaPercent.rounded())))
+            }
+            return L("%@%% in reserve", String(Int(-result.deltaPercent.rounded())))
         }
-        guard result.willOverflow else { return "Lasts until reset" }
+        guard result.willOverflow else { return L("Lasts until reset") }
         // A long overflowing window always yields an ETA (a projection over
         // 100% implies a positive rate), but if that ever stopped holding,
         // saying it lasts would be the one wrong answer.
-        guard let hitsLimitAt = result.hitsLimitAt else { return "Won't last until reset" }
-        return "Runs out in \(countdownLabel(from: now, to: hitsLimitAt))"
+        guard let hitsLimitAt = result.hitsLimitAt else { return L("Won't last until reset") }
+        return L("Runs out in %@", countdownLabel(from: now, to: hitsLimitAt))
     }
 
     private static func helpText(
@@ -178,25 +185,28 @@ enum QuotaPacePresentation {
         now: Date,
         resetsAt: Date
     ) -> String {
-        let basis = "Estimated from the average pace across this whole "
-            + "\(windowLengthLabel(seconds: windowSeconds)) window so far — "
-            + "not a measured recent rate."
+        let basis = L(
+            "Estimated from the average pace across this whole %@ window so far — not a measured recent rate.",
+            windowLengthLabel(seconds: windowSeconds)
+        )
         let projected = Int(result.projectedPercent.rounded())
         let projectionSentence: String
         if result.willOverflow, let hitsLimitAt = result.hitsLimitAt {
-            projectionSentence = "At that pace the limit is reached in "
-                + "\(countdownLabel(from: now, to: hitsLimitAt)), before the reset in "
-                + "\(countdownLabel(from: now, to: resetsAt))."
+            projectionSentence = L(
+                "At that pace the limit is reached in %@, before the reset in %@.",
+                countdownLabel(from: now, to: hitsLimitAt),
+                countdownLabel(from: now, to: resetsAt)
+            )
         } else if abs(result.deltaPercent) <= 2 {
-            projectionSentence = "Projected \(projected)% used by the reset — on pace."
+            projectionSentence = L("Projected %lld%% used by the reset — on pace.", projected)
         } else if result.deltaPercent > 0 {
-            projectionSentence = String(
-                format: "Projected %d%% used by the reset, %.0f%% ahead of the pace the elapsed window implies.",
+            projectionSentence = L(
+                "Projected %d%% used by the reset, %.0f%% ahead of the pace the elapsed window implies.",
                 projected, result.deltaPercent
             )
         } else {
-            projectionSentence = String(
-                format: "Projected %d%% used by the reset, %.0f%% of the window still in reserve.",
+            projectionSentence = L(
+                "Projected %d%% used by the reset, %.0f%% of the window still in reserve.",
                 projected, -result.deltaPercent
             )
         }
@@ -207,12 +217,12 @@ enum QuotaPacePresentation {
     /// actually report, else a plain hours/days rendering of the number.
     private static func windowLengthLabel(seconds: Int) -> String {
         switch seconds {
-        case claudeFiveHourSeconds: return "5-hour"
-        case claudeSevenDaySeconds: return "7-day"
+        case claudeFiveHourSeconds: return L("5-hour")
+        case claudeSevenDaySeconds: return L("7-day")
         default:
             let hours = seconds / 3600
-            if hours >= 24, seconds % 86400 == 0 { return "\(hours / 24)-day" }
-            return "\(hours)-hour"
+            if hours >= 24, seconds % 86400 == 0 { return L("%lld-day", hours / 24) }
+            return L("%lld-hour", hours)
         }
     }
 
@@ -226,12 +236,13 @@ enum QuotaPacePresentation {
     /// Countdown label for an already-computed interval (clamped at zero).
     static func countdownLabel(seconds: TimeInterval) -> String {
         let value = max(0, seconds)
-        if value < 60 { return "<1m" }
+        if value < 60 { return L("<1m") }
         let minutes = Int(value / 60)
         let hours = minutes / 60
         let days = hours / 24
-        if days > 0 { return "\(days)d \(hours % 24)h" }
-        if hours > 0 { return "\(hours)h \(minutes % 60)m" }
-        return "\(minutes)m"
+        // Same three keys the popover's reset countdown uses.
+        if days > 0 { return L("%lldd %lldh", days, hours % 24) }
+        if hours > 0 { return L("%lldh %lldm", hours, minutes % 60) }
+        return L("%lldm", minutes)
     }
 }
