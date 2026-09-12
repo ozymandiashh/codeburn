@@ -549,6 +549,97 @@ describe('muse-code model resolution', () => {
     expect(call!.model).toBe('muse-spark-1.2')
   })
 
+  it('lets the completion model win over the session default', async () => {
+    // The binary's SessionMetadata struct carries model_id as the session
+    // DEFAULT; a session can change model, so a record that names its own model
+    // is authoritative for that step.
+    await writeSession(SESSION, [
+      metadata('/home/dev/checkout', { model_id: 'muse-spark-1.2' }),
+      runEvent(attribution({ usageId: 'usage-pref', input: 1_000_000, output: 0 }), { sequence: 48 }),
+      runEvent(modelCompleted({ input: 1_000_000, model: 'muse-spark-1.3-contributor' }), { sequence: 49 }),
+    ])
+
+    const [call] = await parseAll()
+    expect(call!.model).toBe('muse-spark-1.3-contributor')
+    expect(call!.costUSD).toBeCloseTo(0.10, 6)
+  })
+
+  it('follows a mid-session model change and prices the legs apart', async () => {
+    // EffectiveModelState {provider_id, profile_id, model_id, display_label,
+    // source, last_command_id} rides a model-selection event. Legs before and
+    // after it must not all bill at whatever the metadata record opened with.
+    await writeSession(SESSION, [
+      metadata('/home/dev/checkout', { model_id: 'muse-spark-1.3' }),
+      runEvent(attribution({ usageId: 'usage-before', input: 1_000_000, output: 0 }), { sequence: 40, runId: 'run-a' }),
+      runEvent({
+        kind: 'model_selection_initialized',
+        provider_id: 'meta',
+        profile_id: 'default',
+        model_id: 'muse-spark-1.3-contributor',
+        display_label: 'Muse Spark 1.3 (contributor)',
+        source: 'command',
+        last_command_id: 'cmd-1',
+      }, { sequence: 41 }),
+      runEvent(attribution({ usageId: 'usage-after', input: 1_000_000, output: 0 }), { sequence: 42, runId: 'run-b' }),
+    ])
+
+    const calls = await parseAll()
+    expect(calls).toHaveLength(2)
+    expect(calls.map(c => c.model)).toEqual(['muse-spark-1.3', 'muse-spark-1.3-contributor'])
+    expect(calls[0]!.costUSD).toBeCloseTo(1.25, 6)
+    expect(calls[1]!.costUSD).toBeCloseTo(0.10, 6)
+  })
+
+  it('follows a completed reconfigure through its nested EffectiveModelState', async () => {
+    // model_reconfigure_completed carries {effective, apply_outcome}, so the new
+    // model id sits under `effective`, not flat on the event.
+    await writeSession(SESSION, [
+      metadata('/home/dev/checkout', { model_id: 'muse-spark-1.3' }),
+      runEvent({
+        kind: 'model_reconfigure_completed',
+        effective: { provider_id: 'meta', profile_id: 'default', model_id: 'muse-spark-1.2-contributor', display_label: 'Muse Spark 1.2 (contributor)', source: 'command', last_command_id: 'cmd-2' },
+        apply_outcome: 'applied',
+      }, { sequence: 41 }),
+      runEvent(attribution({ usageId: 'usage-reconfigured', input: 1_000_000, output: 0 }), { sequence: 42 }),
+    ])
+
+    const [call] = await parseAll()
+    expect(call!.model).toBe('muse-spark-1.2-contributor')
+    expect(call!.costUSD).toBeCloseTo(0.10, 6)
+  })
+
+  it('does not let a rejected or failed reconfigure change the model', async () => {
+    // These events name the model that was NOT applied. Treating one as a
+    // setter would price everything after it at a model the session never ran.
+    await writeSession(SESSION, [
+      metadata('/home/dev/checkout', { model_id: 'muse-spark-1.3' }),
+      runEvent({ kind: 'model_reconfigure_rejected', model_id: 'muse-spark-1.2-contributor', reason: 'unsupported' }, { sequence: 41 }),
+      runEvent({ kind: 'model_reconfigure_failed', failure: { model_id: 'muse-spark-1.2-contributor', kind: 'transport' } }, { sequence: 42 }),
+      runEvent({ kind: 'standing_model_route_unserved', model_id: 'muse-spark-1.2-contributor' }, { sequence: 43 }),
+      runEvent(attribution({ usageId: 'usage-rejected', input: 1_000_000, output: 0 }), { sequence: 44 }),
+    ])
+
+    const [call] = await parseAll()
+    expect(call!.model).toBe('muse-spark-1.3')
+    expect(call!.costUSD).toBeCloseTo(1.25, 6)
+  })
+
+  it('prices the internal build id off its published sibling row', async () => {
+    // `muse-spark-1.2-internal` is baked into the 1.1.1 binary beside
+    // `muse-spark-1.2`. Meta publishes Standard and Contributor rates only, so
+    // it resolves to the Standard sibling rather than to a made-up rate or a
+    // silent $0. Deliberate: it is NOT a contributor id.
+    await writeSession(SESSION, [
+      metadata(),
+      runEvent(attribution({ usageId: 'usage-internal', input: 1_000_000, output: 0 }), { sequence: 48 }),
+      runEvent(modelCompleted({ input: 1_000_000, model: 'muse-spark-1.2-internal' }), { sequence: 49 }),
+    ])
+
+    const [call] = await parseAll()
+    expect(call!.model).toBe('muse-spark-1.2-internal')
+    expect(call!.costUSD).toBeCloseTo(1.25, 6)
+  })
+
   it('reports an unreadable model as unknown rather than guessing a Muse Spark tier', async () => {
     // Meta's own rule: SessionTokenUsageParams.modelId null is "never
     // back-filled, an unpriced leg". Guessing between the tiers would be a
@@ -606,6 +697,31 @@ describe('muse-code against captured real logs', () => {
     // the project can only come from payload.record.workspace_root.
     expect(sources[0]!.project).toBe('muse-probe')
     expect(await parseAll()).toEqual([])
+  })
+
+  it('prices a meta-provider run built from the real log plus the binary field layout', async () => {
+    // synthesised-meta-run.jsonl is echo-session-1.1.1.jsonl with exactly two
+    // fields added - metadata `model_id` and model_completed `model` - at the
+    // positions the binary's own serde struct layouts put them, plus non-zero
+    // counters. Its first line says so. This is the closest thing to a paid
+    // session available here, and it must be replaced by a real one.
+    const dir = join(dataDir(), 'sessions', '2026', '09', '12', SESSION)
+    await mkdir(dir, { recursive: true })
+    await copyFile(join(FIXTURES, 'synthesised-meta-run.jsonl'), join(dir, 'session.jsonl'))
+
+    const calls = await parseAll()
+    expect(calls).toHaveLength(1)
+    const [call] = calls
+    // The per-completion model beats the metadata default (1.3 over 1.2).
+    expect(call!.model).toBe('muse-spark-1.3')
+    expect(call!.inputTokens).toBe(28316 - 316)
+    expect(call!.cacheReadInputTokens).toBe(316)
+    expect(call!.outputTokens).toBe(22)
+    expect(call!.reasoningTokens).toBe(11)
+    expect(call!.project).toBe('muse-probe')
+    expect(call!.userMessage).toBe('Say hello and list two fruits.')
+    expect(call!.costIsEstimated).toBeUndefined()
+    expect(call!.costUSD).toBeCloseTo(calculateCost('muse-spark-1.3', 28000, 22, 0, 316, 0), 12)
   })
 
   it('matches the CodexBar PR #3587 real-log excerpt: one call, model kept, tool row ignored', async () => {

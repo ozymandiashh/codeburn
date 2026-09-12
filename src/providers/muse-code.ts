@@ -140,6 +140,8 @@ type MuseRecord = {
     event?: {
       kind?: unknown
       model?: unknown
+      model_id?: unknown
+      finish_reason?: unknown
       duration_ms?: unknown
       usage?: MuseUsage
       record?: Record<string, unknown>
@@ -242,10 +244,13 @@ type SessionMeta = { workspaceRoot?: string; model?: string; semver?: string; pr
  *  `payload.record.workspace_root` is the project (confirmed on the real
  *  binary), alongside `provider_id` and `build.{sha,semver}`.
  *
- *  `model_id` is read here only as a FALLBACK. superset's helper documents it on
- *  this record for a real Meta-provider session; the echo sessions written here
- *  carry no model field at all, so its presence is unverified against a binary
- *  and the authoritative read stays `model_completed.event.model`. */
+ *  `model_id` is the SESSION DEFAULT model, and the spelling is confirmed: the
+ *  binary's own `SessionMetadata` struct lays its field-name literals out in
+ *  declaration order as `provider_id` `model_id` `web_search_mode`
+ *  `tool_surface_version`, which is exactly the echo run's record with
+ *  `model_id` missing - serde skips a null. It is a fallback, not the
+ *  authoritative read: a per-completion `model` wins, because a session can
+ *  change model mid-way. */
 function readSessionMeta(record: MuseRecord): SessionMeta | null {
   if (record.payload_type !== 'runtime.session.metadata') return null
   const payload = record.payload
@@ -355,6 +360,51 @@ async function discoverSessionsInDir(sessionsDir: string): Promise<SessionSource
   return perSession.flat()
 }
 
+// A session can change model mid-way, so the session default has to move with
+// it. The binary carries an `EffectiveModelState` struct (`provider_id`
+// `profile_id` `model_id` `display_label` `source` `last_command_id`) and a
+// contiguous family of run-stream event kinds that announce one:
+//
+//   model_reconfigure_completed  {effective, apply_outcome}   -> new model
+//   model_reconfigure_failed     {failure}                    -> NO change
+//   model_reconfigure_rejected                                -> NO change
+//   model_selection_initialized                               -> new model
+//   standing_model_route_unserved                             -> NO change
+//   run_model_configured  {profile_id, model_id, display_label, source}
+//
+// Only the affirmative ones move the default. A failed, rejected or unserved
+// reconfigure leaves the session on the model it was already using; treating
+// one as a setter would unprice or mis-price everything after it.
+const MODEL_SETTING_EVENT_KINDS = new Set([
+  'model_selection_initialized',
+  'model_reconfigure_completed',
+  'run_model_configured',
+])
+
+// Announced but deliberately inert. Listed so they are not counted as unknown.
+const MODEL_NON_SETTING_EVENT_KINDS = new Set([
+  'model_reconfigure_failed',
+  'model_reconfigure_rejected',
+  'standing_model_route_unserved',
+])
+
+/** The `model_id` an `EffectiveModelState`-carrying event announces, wherever
+ *  that struct sits on the event: `run_model_configured` carries the field flat,
+ *  `model_reconfigure_completed` carries it under `effective`. Only a real
+ *  string is accepted, so an event that announces none leaves the default. */
+function effectiveModelId(event: Record<string, unknown>): string | undefined {
+  const direct = stringOrUndefined(event['model_id'])
+  if (direct) return direct
+  for (const key of ['effective', 'effective_model', 'model', 'record', 'state']) {
+    const nested = event[key]
+    if (isObject(nested)) {
+      const found = stringOrUndefined(nested['model_id'])
+      if (found) return found
+    }
+  }
+  return undefined
+}
+
 type ProviderUsage = {
   usageId: string
   input: number
@@ -364,6 +414,9 @@ type ProviderUsage = {
   reasoning: number
   reported: boolean
   timestamp: string
+  // The session default model in force when this record was read, so a
+  // mid-session model change prices the legs before and after it apart.
+  sessionModel?: string
 }
 
 type ModelCompletion = {
@@ -371,6 +424,7 @@ type ModelCompletion = {
   model?: string
   usage: ProviderUsage
   timestamp: string
+  sessionModel?: string
 }
 
 type RunBucket = {
@@ -459,6 +513,9 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
       let sessionStart = ''
       let userMessage = ''
       let sawUnreportedUsage = false
+      // Starts at the metadata record's `model_id` and moves with any
+      // model-selection event; captured onto each usage record as it is read.
+      let currentSessionModel: string | undefined
       // `muse export` reports `diagnostics.duplicate_records` and
       // `unknown_payload_kinds` for exactly these two classes; report the same
       // two rather than dropping records silently.
@@ -500,6 +557,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
             const nextMeta = readSessionMeta(record)
             if (nextMeta) {
               meta ??= nextMeta
+              currentSessionModel = nextMeta.model ?? currentSessionModel
               continue
             }
 
@@ -531,10 +589,17 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
             if (!eventKind) continue
             const runId = stringOrUndefined(payload['run_id']) ?? (sessionId || source.path)
 
+            if (MODEL_SETTING_EVENT_KINDS.has(eventKind)) {
+              currentSessionModel = effectiveModelId(event) ?? currentSessionModel
+              continue
+            }
+            if (MODEL_NON_SETTING_EVENT_KINDS.has(eventKind)) continue
+
             if (eventKind === 'goal_usage_attribution') {
               const usage = readAttribution(event, timestamp)
               if (!usage) continue
               if (!usage.reported) sawUnreportedUsage = true
+              usage.sessionModel = currentSessionModel
               bucketFor(runId).attributions.push(usage)
               continue
             }
@@ -546,9 +611,16 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
                 ?? `${runId}:${String(bucketFor(runId).completions.length)}`
               bucketFor(runId).completions.push({
                 recordId,
+                // `model`, not `model_id`: the binary's `model_completed` struct
+                // lays its fields out as `usage` `duration_ms` `finish_reason`
+                // `model`. Absent on an echo run, where there is no model.
+                // `duration_ms` and `finish_reason` sit beside it on the same
+                // struct; neither is read, because codeburn has no throughput
+                // or stop-reason accounting for this provider yet.
                 model: stringOrUndefined(event['model']),
                 usage: usageFromTokens(isObject(usage) ? usage : {}, `completed-${recordId}`, isObject(usage), timestamp),
                 timestamp,
+                sessionModel: currentSessionModel,
               })
               continue
             }
@@ -651,7 +723,13 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
           if (input + output + cached + usage.cacheWrite + reasoning === 0) continue
           seenKeys.add(dedupKey)
 
-          // THE ONE PRICING CLAIM META'S OWN SCHEMA DOES NOT SETTLE.
+          // THE ONE PRICING CLAIM META'S OWN SCHEMA DOES NOT SETTLE OUTRIGHT.
+          // Corroborated, though, by the binary's own field naming: a sibling
+          // usage struct in muse-bin-1.1.1-R2514.1 spells `input_tokens`
+          // `cached_input_tokens` `non_cached_input_tokens` `output_tokens`
+          // `total_tokens` - cached is a PARTITION OF input there, not a
+          // sibling of it. That is not proof for `quantity.cached_tokens`
+          // specifically, but nothing in the binary points the other way.
           // `TokenUsage.cachedTokens` there is documented as living "inside or
           // beside `inputTokens`, provider-convention-dependent - the reason
           // `promptTokens` exists" (tdd SS4.6.5). `promptTokens` is the
@@ -669,9 +747,20 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
           const uncachedInput = Math.max(0, input - cached)
           const cacheWriteInput = Math.max(0, Math.min(usage.cacheWrite, uncachedInput))
 
+          // Precedence, in the order the binary makes available:
+          //   1. this step's own `model_completed.model`;
+          //   2. another completion in the same run that named one (a run's
+          //      steps share a model unless a selection event says otherwise);
+          //   3. the session default in force when this record was read. That
+          //      is seeded from the metadata record's `model_id` and moved by
+          //      every affirmative model event, so it is the ONLY session-level
+          //      source - reading `meta.model` again here would silently undo a
+          //      mid-session change for any step that named no model itself;
+          //   4. unknown, which is unpriced. Never a guessed tier.
           const model = completion?.model
             ?? bucket.completions.find(c => c.model)?.model
-            ?? meta?.model
+            ?? completion?.sessionModel
+            ?? attribution?.sessionModel
             ?? UNKNOWN_MODEL
 
           // Same rule codex.ts applies: only move tokens into the cache-write
