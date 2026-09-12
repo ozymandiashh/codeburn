@@ -1828,6 +1828,10 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
+        // Only the release notice installs anything. Every other poster shares
+        // this delegate, so a tap on one of those must not start an update.
+        guard response.notification.request.identifier
+            .hasPrefix(UpdateChecker.notificationIdentifierPrefix) else { return }
         await MainActor.run { self.updateChecker.performFullUpdate() }
     }
 }

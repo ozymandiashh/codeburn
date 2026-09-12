@@ -107,9 +107,11 @@ const SERVE_OPTIONS: Readonly<Record<string, Readonly<Record<string, ServeOption
     '--contributions': 'flag',
   },
   compare: {
-    '-p': 'value', '--period': 'value', '--provider': 'value', '--format': 'value',
+    '-p': 'value', '--period': 'value', '--from': 'value', '--to': 'value',
+    '--provider': 'value', '--format': 'value',
     '--model-a': 'value', '--model-b': 'value',
     '--project': 'value', '--exclude': 'value',
+    '--category': 'value', '--project-id': 'value',
   },
   yield: {
     '-p': 'value', '--period': 'value', '--provider': 'value', '--format': 'value',

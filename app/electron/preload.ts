@@ -29,6 +29,11 @@ const bridge = {
   getSessionsContributions: (period: string, provider: string, range?: DateRange, background?: boolean) => invoke('codeburn:getSessionsContributions', period, provider, range, background),
   getCompareModels: (period: string, provider: string, background?: boolean) => invoke('codeburn:getCompareModels', period, provider, background),
   getCompare: (period: string, provider: string, modelA: string, modelB: string) => invoke('codeburn:getCompare', period, provider, modelA, modelB),
+  getPeriodCompare: (rangeA: DateRange, rangeB: DateRange, provider: string, background?: boolean) => invoke('codeburn:getPeriodCompare', rangeA, rangeB, provider, background),
+  getPeriodCompareSessions: (rangeA: DateRange, rangeB: DateRange, provider: string, dimension: string, key: string) => invoke('codeburn:getPeriodCompareSessions', rangeA, rangeB, provider, dimension, key),
+  getCompareCohortModels: (period: string, provider: string, range?: DateRange, background?: boolean) => invoke('codeburn:getCompareCohortModels', period, provider, range, background),
+  getCompareCohort: (period: string, provider: string, modelA: string, modelB: string, range?: DateRange, projects?: string[], category?: string, background?: boolean) =>
+    invoke('codeburn:getCompareCohort', period, provider, modelA, modelB, range, projects, category, background),
   getYield: (period: string, provider: string, range?: DateRange, background?: boolean) => invoke('codeburn:getYield', period, provider, range, background),
   getSpendFlow: (period: string, provider: string, range?: DateRange, background?: boolean) => invoke('codeburn:getSpendFlow', period, provider, range, background),
   getBranchSpend: (period: string, provider: string, range?: DateRange, background?: boolean) => invoke('codeburn:getBranchSpend', period, provider, range, background),

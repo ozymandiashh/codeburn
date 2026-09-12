@@ -391,6 +391,12 @@ private struct GeneralSettingsTab: View {
     @AppStorage(UpdateNotificationPreference.defaultsKey)
     private var notifyAboutUpdates: Bool = true
 
+    @AppStorage(CodexBankedResetNotificationPreference.defaultsKey)
+    private var notifyAboutBankedResets: Bool = true
+
+    @AppStorage(EarlyQuotaResetPreference.defaultsKey)
+    private var notifyAboutEarlyResets: Bool = true
+
     private let costPresets: Set<Double> = [25, 50, 100, 200, 500]
     private let tokenPresets: Set<Double> = [1_000_000, 5_000_000, 10_000_000, 25_000_000, 50_000_000, 100_000_000]
 
@@ -504,9 +510,17 @@ private struct GeneralSettingsTab: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Updates") {
+            Section("Notifications") {
                 Toggle("Notify me about updates", isOn: $notifyAboutUpdates)
                 Text("Posts a notification when a new CodeBurn release is available. Click it to install.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Toggle("Notify me when Codex banks a limit reset", isOn: $notifyAboutBankedResets)
+                Text("OpenAI sometimes grants Codex accounts a credit that resets a rate-limit window early. CodeBurn reads these from the quota response it already fetches and tells you once per grant. It never spends one.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Toggle("Notify me when a quota resets early", isOn: $notifyAboutEarlyResets)
+                Text("Posts a notification when a provider resets a usage limit before its scheduled time, so you know the capacity is back. The Capacity Dock shows the same notice for 12 hours either way.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
