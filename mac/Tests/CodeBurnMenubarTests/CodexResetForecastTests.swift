@@ -987,6 +987,22 @@ private let newerRecord = decodedHistory("2026-09-13T11:30:00Z", resets: 4)
     #expect(resolution.history == bundledRecord)
 }
 
+@Test func theSettingsDatasetLineNamesTheCopyAndWhenItWasBuilt() {
+    // Same wording and the same raw ISO instant `codeburn quota` prints, so the
+    // two surfaces cannot disagree about which record is in use.
+    #expect(CodexResetForecastPresentation.datasetLine(
+        generatedAt: "2026-09-12T20:52:51Z", source: .bundled
+    ) == "Record: 2026-09-12T20:52:51Z, bundled with this build.")
+    #expect(CodexResetForecastPresentation.datasetLine(
+        generatedAt: "2026-09-13T11:30:00Z", source: .fetched
+    ) == "Record: 2026-09-13T11:30:00Z, refreshed from this repository on GitHub.")
+    // A record with no date still says which copy it is rather than nothing.
+    #expect(CodexResetForecastPresentation.datasetLine(generatedAt: nil, source: .bundled)
+        == "Record: bundled with this build.")
+    #expect(CodexResetForecastPresentation.datasetLine(generatedAt: "", source: .fetched)
+        == "Record: refreshed from this repository on GitHub.")
+}
+
 @Test func theRefreshIsOnByDefaultUnlikeTheNotification() {
     let defaults = UserDefaults(suiteName: "codeburn.tests.resetHistoryRefresh")!
     defaults.removePersistentDomain(forName: "codeburn.tests.resetHistoryRefresh")

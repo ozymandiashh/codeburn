@@ -88,8 +88,8 @@ Concretely:
   build is the floor. A fetched record is adopted only if it passes the same
   validation the workflow applies *and* is strictly newer.
 
-Turn it off in Settings → General → Notifications, "Refresh reset history from
-GitHub". With it off, only the copy inside the app is used. On the CLI, the same
+Turn it off in Settings → General → Reset Forecast Data, "Refresh reset history
+from GitHub" — which also shows which copy is in use and when it was built. With it off, only the copy inside the app is used. On the CLI, the same
 fetch honours `CODEBURN_PRICING_SNAPSHOT_ONLY`, the knob that already pins
 pricing to its bundled snapshot; `codeburn quota` prints which copy it read and
 when that copy was built.

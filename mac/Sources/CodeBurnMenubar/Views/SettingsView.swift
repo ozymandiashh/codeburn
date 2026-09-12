@@ -543,11 +543,22 @@ private struct GeneralSettingsTab: View {
                     }
                 }
                 .disabled(!notifyAboutResetForecast)
-                Toggle("Refresh reset history from GitHub (hourly, no data sent)", isOn: $refreshResetHistory)
-                Text("The reset history ships with the app and is a release old by the time you have it. With this on, CodeBurn asks GitHub for a newer copy at most once an hour, from the same host it already uses to check for updates, sending nothing about you or your account — no credential, no usage, no plan. With it off, only the copy inside the app is used. CodeBurn never contacts the community tracker the record comes from.")
+                Text("CodeBurn estimates the chance of OpenAI resetting Codex usage limits from the public record of past resets that ships with the app. This is a statistical estimate, never an announcement, and it is often wrong. Nothing is spent and the notice never acts on its own. You get at most one notice per crossing; it re-arms when the estimate falls back under your threshold.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                Text("CodeBurn estimates the chance of OpenAI resetting Codex usage limits from the public record of past resets that ships with the app. This is a statistical estimate, never an announcement, and it is often wrong. Nothing is spent and the notice never acts on its own. You get at most one notice per crossing; it re-arms when the estimate falls back under your threshold.")
+            }
+
+            // Not a notification: this is where the numbers come from. The
+            // notice that uses them stays in Notifications above.
+            Section("Reset Forecast Data") {
+                Toggle("Refresh reset history from GitHub (hourly, no data sent)", isOn: $refreshResetHistory)
+                Text(CodexResetForecastPresentation.datasetLine(
+                    generatedAt: store.codexResetHistory?.generatedAt,
+                    source: store.codexResetHistorySource
+                ))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                Text("The record of past Codex resets ships with the app and is a release old by the time you have it. With this on, CodeBurn asks GitHub for a newer copy at most once an hour, from the same host it already uses to check for updates, sending nothing about you or your account — no credential, no usage, no plan. With it off, only the copy inside the app is used. CodeBurn never contacts the community tracker the record comes from.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }

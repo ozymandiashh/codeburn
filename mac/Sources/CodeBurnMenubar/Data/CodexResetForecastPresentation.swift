@@ -79,6 +79,18 @@ enum CodexResetForecastPresentation {
         return [headline, "\(caveats.joined(separator: "; "))."]
     }
 
+    /// Which copy of the record the forecast is reading, and when that copy was
+    /// built. The instant is left in the record's own ISO form, unformatted and
+    /// in UTC, so it matches the `Record:` line `codeburn quota` prints
+    /// character for character and cannot drift with a locale.
+    static func datasetLine(generatedAt: String?, source: CodexResetHistorySource) -> String {
+        let origin = source == .fetched
+            ? "refreshed from this repository on GitHub"
+            : "bundled with this build"
+        guard let generatedAt, !generatedAt.isEmpty else { return "Record: \(origin)." }
+        return "Record: \(generatedAt), \(origin)."
+    }
+
     /// The notification. It says what it is before it says a number, and it
     /// never asks the reader to do anything: no action buttons, no deep link,
     /// nothing spent, nothing redeemed, nothing refreshed.
