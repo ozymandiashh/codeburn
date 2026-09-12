@@ -156,6 +156,19 @@ endpoint is only called when the inline block is absent. It is the sole source
 of per-credit `expires_at` values, so the "next expires" caption is omitted on
 the inline path.
 
+## Reset forecast
+
+Separately from anything read off the account, `codeburn quota` prints the chance
+of a *global* Codex usage-limit reset landing in the next 6 and 24 hours, with a
+range. It is computed from a record of past resets committed to this repo
+(`src/data/codex-reset-history.json`), derived from
+[codex-reset.com](https://codex-reset.com)'s public `/api/timeline` — a community
+tracker, not operated by or endorsed by OpenAI. The client never fetches it; a
+scheduled workflow refreshes the file into a pull request.
+
+See [docs/codex-reset-forecast.md](../codex-reset-forecast.md) for the model, the
+backtest that sets its confidence label, and what the forecast is not.
+
 ## When fixing a bug here
 
 1. Reproduce against a real `rollout-*.jsonl` if you can. Drop a redacted copy under `tests/fixtures/codex/` and reference it from `tests/providers/codex.test.ts`.
