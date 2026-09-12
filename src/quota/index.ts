@@ -15,6 +15,8 @@ import { fetchCursorQuota } from './cursor.js'
 import { fetchGeminiQuota } from './gemini.js'
 import { fetchGrokQuota } from './grok.js'
 import { fetchKimiQuota } from './kimi.js'
+import { withCodexResetForecast } from './codex-forecast.js'
+import type { CodexForecastOptions, CodexResetForecastPayload } from './codex-forecast.js'
 import type { ProviderName, QuotaProvider } from './types.js'
 import { fetchZaiQuota } from './zai.js'
 
@@ -27,6 +29,11 @@ export type QuotaCommandProvider = {
   plan?: string
   windows: QuotaCommandWindow[]
   error?: string
+  /** Codex only: the chance of a global usage-limit reset landing soon,
+   *  computed from the dataset committed to this repo. Carries both the
+   *  rendered sentences and the numbers behind them, so `--format json` is not
+   *  reduced to parsing English. */
+  resetForecast?: CodexResetForecastPayload
 }
 
 export type QuotaReport = { providers: QuotaCommandProvider[] }
@@ -87,6 +94,8 @@ export function toCommandProvider(id: ProviderName, name: string, quota: QuotaPr
 export async function collectQuota(options: {
   readers?: { id: ProviderName; name: string; read: ProviderReader }[]
   timeoutMs?: number
+  /** Injected by tests so the forecast runs against a fixed clock and history. */
+  forecast?: CodexForecastOptions
 } = {}): Promise<QuotaReport> {
   const readers = options.readers ?? READERS
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -99,7 +108,7 @@ export async function collectQuota(options: {
       if (quota === 'timeout') {
         return { id: entry.id, name: entry.name, available: false, windows: [], error: 'Timed out.' }
       }
-      return toCommandProvider(entry.id, entry.name, quota)
+      return withCodexResetForecast(toCommandProvider(entry.id, entry.name, quota), options.forecast)
     } finally {
       clearTimeout(timer)
     }
@@ -126,5 +135,23 @@ export function renderQuotaTable(report: QuotaReport, opts: { color?: boolean } 
     })
   }
   const columns = [{ header: 'Provider' }, { header: 'Window' }, { header: 'Used', right: true }, { header: 'Resets' }]
-  return renderTable(columns, rows, { color: opts.color })
+  return renderTable(columns, rows, { color: opts.color }) + renderResetForecastSection(report)
+}
+
+/** The Codex reset forecast, as its own block under the table. Deliberately not
+ *  a table row: the sentences are far longer than any window label and would
+ *  stretch the Window column past every other provider's row. */
+export function renderResetForecastSection(report: QuotaReport): string {
+  const lines: string[] = []
+  for (const provider of report.providers) {
+    const forecast = provider.resetForecast
+    if (!forecast) continue
+    lines.push('')
+    lines.push(`${provider.name} reset forecast`)
+    for (const line of forecast.lines) lines.push(`  ${line}`)
+    if (forecast.available) {
+      lines.push(`  Source: ${forecast.source} — refreshed in this repo by a scheduled workflow, never fetched by this client.`)
+    }
+  }
+  return lines.length > 0 ? lines.join('\n') + '\n' : ''
 }
