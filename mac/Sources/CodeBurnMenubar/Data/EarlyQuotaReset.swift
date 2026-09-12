@@ -279,13 +279,29 @@ enum EarlyQuotaResetHistory {
         windowName: String,
         windowSeconds: Int?
     ) -> Summary? {
+        summarize(
+            cycleResets: snapshots.filter { $0.windowKey == windowKey }.map(\.resetsAt),
+            windowKey: windowKey,
+            windowName: windowName,
+            windowSeconds: windowSeconds
+        )
+    }
+
+    /// Same reading of the same evidence, from reset times held somewhere other
+    /// than the snapshot store. Only Claude persists quota snapshots to disk, so
+    /// every other provider's record of its own cycles comes from the monitor's
+    /// per-provider ledger.
+    static func summarize(
+        cycleResets: [Date],
+        windowKey: String,
+        windowName: String,
+        windowSeconds: Int?
+    ) -> Summary? {
         guard let seconds = windowSeconds, seconds > 0 else { return nil }
         let window = TimeInterval(seconds)
         guard window > QuotaPace.etaSuppressionMaxSeconds else { return nil }
 
-        let resets = snapshots
-            .filter { $0.windowKey == windowKey }
-            .map(\.resetsAt)
+        let resets = cycleResets
             .filter { $0.timeIntervalSince1970.isFinite }
             .sorted()
         // Jittered timestamps of one cycle collapse to that cycle's latest.
@@ -342,6 +358,45 @@ enum EarlyQuotaResetFormat {
         }
     }
 
+    /// Storage identity for a window that has no key of its own. Claude's
+    /// windows keep the snapshot store's keys; every other provider identifies
+    /// its windows by the label the adapter already shows in the popover,
+    /// slugified so the key survives a JSON round trip and never collides with
+    /// a sibling row.
+    ///
+    /// A label that changes with the window's state — Codex's credit row
+    /// appends "· limit reached" — changes the key with it. That costs a
+    /// baseline, so the next fetch is silent; it can never turn into a false
+    /// announcement, because a key with no stored reading has nothing to
+    /// compare against.
+    static func windowKey(forLabel label: String) -> String {
+        var slug = ""
+        var pendingSeparator = false
+        for scalar in label.lowercased().unicodeScalars {
+            if CharacterSet.alphanumerics.contains(scalar) {
+                if pendingSeparator { slug.append("_") }
+                slug.unicodeScalars.append(scalar)
+                pendingSeparator = false
+            } else if !slug.isEmpty {
+                pendingSeparator = true
+            }
+        }
+        return slug.isEmpty ? "window" : slug
+    }
+
+    /// Copy noun for a window named only by its display label. A label that
+    /// already says what it caps ("Monthly usage limit") keeps its own noun; one
+    /// that names only a period ("Weekly", "5-hour") gains "limit" so the
+    /// notification reads as a sentence.
+    static func windowName(forLabel label: String) -> String {
+        let trimmed = label
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !trimmed.isEmpty else { return "quota window" }
+        let ownNouns = ["limit", "usage", "quota", "credits", "window"]
+        return ownNouns.contains(where: trimmed.hasSuffix) ? trimmed : "\(trimmed) limit"
+    }
+
     /// "2d 3h", "18h", "40m" — rounded to the unit it prints, so a lead of
     /// 1h57m reads "2h" rather than truncating to "1h".
     static func lead(seconds: TimeInterval) -> String {
@@ -366,7 +421,12 @@ enum EarlyQuotaResetFormat {
     }
 
     /// "weekly limit" -> "weekly usage": what the vendor cleared, not the cap.
-    static func usageName(_ name: String) -> String { "\(windowNoun(name)) usage" }
+    /// A noun that already says "usage" (Codex's "monthly usage limit") is left
+    /// alone rather than doubled.
+    static func usageName(_ name: String) -> String {
+        let noun = windowNoun(name)
+        return noun.hasSuffix("usage") ? noun : "\(noun) usage"
+    }
 
     static func capitalizedFirst(_ text: String) -> String {
         guard let first = text.first else { return text }
