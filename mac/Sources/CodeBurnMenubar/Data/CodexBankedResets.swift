@@ -102,29 +102,35 @@ enum CodexBankedResetDetector {
 /// The one place the banked-reset wording lives. `src/quota/codex.ts` carries a
 /// line-for-line mirror of `detail` and `compactAge` so the CLI and the menubar
 /// say the same sentence.
+///
+/// Every piece now resolves through the catalog (#1219). That keeps the mirror
+/// exact in English — `en` is an identity table, so these produce byte-for-byte
+/// what they produced before and what `codex.ts` still produces — while letting
+/// a zh-Hans menubar say it in Chinese. The CLI stays English-only, so the two
+/// diverge in a translated build exactly as every other menubar string does.
 enum CodexBankedResetPresentation {
     /// Label the detail hangs off, in the Plan tab and in front of the detail on
     /// every other surface.
-    static let rowLabel = "Limit resets"
+    static var rowLabel: String { L("Limit resets") }
 
     /// `2 available · 1 usable now · latest weekly reset granted 2h ago · next expires in 16h`
     /// Nil when the account holds nothing — the row hides rather than printing a zero.
     static func detail(_ credits: CodexUsage.ResetCredits, now: Date) -> String? {
         guard credits.availableCount > 0 else { return nil }
-        var parts = ["\(credits.availableCount) available"]
+        var parts = [L("%lld available", credits.availableCount)]
         // Only worth saying when it disagrees with the headline count: equal
         // numbers would just be the same fact twice.
         if let applicable = credits.applicableAvailableCount, applicable != credits.availableCount {
-            parts.append("\(applicable) usable now")
+            parts.append(L("%lld usable now", applicable))
         }
         if let grant = credits.latestGrant, let grantedAt = grant.grantedAt {
             let type = resetTypeLabel(grant.resetType)
             parts.append(grantedAt > now
-                ? "next \(type) lands \(compactAge(of: grantedAt, now: now))"
-                : "latest \(type) granted \(compactAge(of: grantedAt, now: now))")
+                ? L("next %@ lands %@", type, compactAge(of: grantedAt, now: now))
+                : L("latest %@ granted %@", type, compactAge(of: grantedAt, now: now)))
         }
         if let expiry = credits.nextExpiresAt {
-            parts.append("next expires \(compactAge(of: expiry, now: now))")
+            parts.append(L("next expires %@", compactAge(of: expiry, now: now)))
         }
         return parts.joined(separator: " · ")
     }
@@ -147,16 +153,16 @@ enum CodexBankedResetPresentation {
         var body: String
         if let grantedAt = grant.grantedAt {
             body = grantedAt > now
-                ? "A \(type) lands \(compactAge(of: grantedAt, now: now))."
-                : "A \(type) was added to your account \(compactAge(of: grantedAt, now: now))."
+                ? L("A %@ lands %@.", type, compactAge(of: grantedAt, now: now))
+                : L("A %@ was added to your account %@.", type, compactAge(of: grantedAt, now: now))
         } else {
-            body = "A \(type) was added to your account."
+            body = L("A %@ was added to your account.", type)
         }
         // `applicable_available_count` is the number that answers "can I use one
         // right now"; the plain count is the fallback when it is absent.
         let usable = credits.applicableAvailableCount ?? credits.availableCount
-        body += " You have \(usable) available to use."
-        return ("Codex banked a limit reset", body)
+        body += " " + L("You have %lld available to use.", usable)
+        return (L("Codex banked a limit reset"), body)
     }
 
     /// "weekly" -> "weekly reset". An absent or empty `reset_type` degrades to
@@ -167,25 +173,27 @@ enum CodexBankedResetPresentation {
             .replacingOccurrences(of: "_", with: " ")
             .replacingOccurrences(of: "-", with: " ")
             .lowercased()
-        return raw.isEmpty ? "limit reset" : "\(raw) reset"
+        return raw.isEmpty ? L("limit reset") : L("%@ reset", raw)
     }
 
-    /// Deliberately not `RelativeDateTimeFormatter`: this string has to come out
+    /// Deliberately not `RelativeDateTimeFormatter`: the thresholds have to be
     /// character-identical in Swift and in TypeScript, so the rules are spelled
-    /// out instead of delegated to a locale-aware formatter.
+    /// out instead of delegated to a locale-aware formatter. Only the rendered
+    /// unit goes through the catalog, which leaves the English identical and
+    /// the branch points shared.
     static func compactAge(of date: Date, now: Date) -> String {
         let elapsed = now.timeIntervalSince(date)
         if elapsed >= 0 {
-            if elapsed < 60 { return "just now" }
-            if elapsed < 3600 { return "\(Int(elapsed / 60))m ago" }
-            if elapsed < 86_400 { return "\(Int(elapsed / 3600))h ago" }
-            return "\(Int(elapsed / 86_400))d ago"
+            if elapsed < 60 { return L("just now") }
+            if elapsed < 3600 { return L("%lldm ago", Int(elapsed / 60)) }
+            if elapsed < 86_400 { return L("%lldh ago", Int(elapsed / 3600)) }
+            return L("%lldd ago", Int(elapsed / 86_400))
         }
         let ahead = -elapsed
-        if ahead < 60 { return "in under a minute" }
-        if ahead < 3600 { return "in \(Int(ahead / 60))m" }
-        if ahead < 86_400 { return "in \(Int(ahead / 3600))h" }
-        return "in \(Int(ahead / 86_400))d"
+        if ahead < 60 { return L("in under a minute") }
+        if ahead < 3600 { return L("in %lldm", Int(ahead / 60)) }
+        if ahead < 86_400 { return L("in %lldh", Int(ahead / 3600)) }
+        return L("in %lldd", Int(ahead / 86_400))
     }
 }
 

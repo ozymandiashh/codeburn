@@ -428,7 +428,7 @@ private struct QuotaDetailPopover: View {
                     Text(line)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
-                        .help("Derived from this Mac's own record of past quota windows for this provider. Local only — nothing is fetched to produce it.")
+                        .help(L("Derived from this Mac's own record of past quota windows for this provider. Local only — nothing is fetched to produce it."))
                 }
             }
             if !quota.footerLines.isEmpty {

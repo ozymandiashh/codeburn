@@ -1140,14 +1140,14 @@ struct CapacityDockDetailView: View {
                 .font(.system(size: 10.5))
                 .monospacedDigit()
                 .foregroundStyle(Color.capacityDockText)
-            Text("cache read")
+            Text(L("cache read"))
                 .font(.system(size: 9.5))
                 .foregroundStyle(Color.capacityDockText.opacity(0.6))
         }
         .frame(height: 13 * s)
         .help(explanation)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Cache read: \(value.asCompactTokens().lowercasedThousands()) tokens")
+        .accessibilityLabel(L("Cache read: %@ tokens", value.asCompactTokens().lowercasedThousands()))
         .accessibilityHint(explanation)
     }
 
@@ -1265,7 +1265,7 @@ struct CapacityDockDetailView: View {
                 )
                 .padding(.top, 2 * scale)
                 .help(window.label)
-                .accessibilityLabel("Quota window " + window.label)
+                .accessibilityLabel(L("Quota window %@", window.label))
             Text(window.resetsInLabel)
                 .font(.system(size: 10 * scale))
                 .monospacedDigit()
@@ -1281,7 +1281,7 @@ struct CapacityDockDetailView: View {
                     alignment: alignment == .leading ? .leading : .center
                 )
                 .padding(.top, 2 * scale)
-                .accessibilityLabel("Resets " + window.resetsInLabel)
+                .accessibilityLabel(L("Resets %@", window.resetsInLabel))
             if hasPaceSlot {
                 paceCaption(paceLine)
                     .frame(

@@ -91,9 +91,9 @@ enum CopilotQuotaPresentation {
     /// previous snapshot already proved which host answers.
     static func dormantSettingsDetail(apiHost: String?) -> String {
         guard let apiHost, !apiHost.isEmpty, apiHost != CopilotHostEndpoint.defaultAPIHost else {
-            return "Tap Load Quota to fetch live usage from GitHub."
+            return L("Tap Load Quota to fetch live usage from GitHub.")
         }
-        return "Tap Load Quota to fetch live usage from \(apiHost)."
+        return L("Tap Load Quota to fetch live usage from %@.", apiHost)
     }
 
     /// Why a host typed next to the pasted token cannot be used, or nil when
@@ -103,8 +103,10 @@ enum CopilotQuotaPresentation {
     static func pastedHostRejection(_ raw: String) -> String? {
         let host = CopilotHostEndpoint.normalize(raw) ?? CopilotHostEndpoint.defaultHost
         guard CopilotHostEndpoint.apiHost(for: host) == nil else { return nil }
-        return "CodeBurn cannot read Copilot quota for \(host). "
-            + "Use github.com or a GitHub Enterprise Cloud host (*.ghe.com)."
+        return L(
+            "CodeBurn cannot read Copilot quota for %@. Use github.com or a GitHub Enterprise Cloud host (*.ghe.com).",
+            host
+        )
     }
 
     /// Snapshot age past which a loaded view stamps an "as of <time>" caption,
