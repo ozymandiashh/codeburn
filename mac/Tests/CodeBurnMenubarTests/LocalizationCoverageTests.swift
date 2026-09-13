@@ -104,6 +104,42 @@ struct LocalizationCoverageTests {
         )
     }
 
+    /// A generous ceiling on what the whole-tree scan costs.
+    ///
+    /// swift-testing runs suites concurrently in one process, so this scan's
+    /// cost is paid by every wall-clock assertion running beside it —
+    /// `ServeConnectionTests` checks that cancelling a hung request returns
+    /// inside 500 ms (#1333). In the unoptimised build `swift test` uses, the
+    /// scan once burned about 21 s of CPU across the four tests above; it now
+    /// takes about 0.2 s, once, because the result is memoised. The ceiling is
+    /// ten times that, so it trips on an algorithmic regression — a pattern
+    /// loop rescanning the file, an allocation per byte — and never on a merely
+    /// slow runner.
+    ///
+    /// Measured in the scanning thread's own CPU time. Wall time on a shared
+    /// runner is noise, and would make this test the flake it exists to
+    /// prevent; process CPU would bill it for every test running concurrently.
+    @Test("the whole-tree scan stays cheap enough to run beside timing tests")
+    func scanStaysCheap() throws {
+        let scan = try LocalizationSourceScanner.scan(directory: Self.sourcesDirectory)
+        print(
+            "LocalizationSourceScanner: \(scan.fileCount) files, \(scan.byteCount / 1024) KB, "
+                + "wall \(Int((scan.wallSeconds * 1000).rounded())) ms, "
+                + "thread CPU \(Int((scan.cpuSeconds * 1000).rounded())) ms"
+        )
+        #expect(scan.fileCount > 50, "the scan read \(scan.fileCount) files; a cheap scan of nothing proves nothing")
+        #expect(
+            scan.cpuSeconds < 2.0,
+            """
+            the localization scan took \(scan.cpuSeconds) s of CPU (ceiling 2 s). It runs \
+            concurrently with wall-clock assertions such as ServeConnectionTests' 500 ms \
+            cancellation budget (#1333), so a slow scan fails other suites. Look for a \
+            per-pattern rescan of the file, a per-byte allocation, or a backward walk \
+            per finding in LocalizationSourceScanner.
+            """
+        )
+    }
+
     // MARK: - The scanner's own rules
     //
     // The guard above is only as good as these: a scanner that quietly stops

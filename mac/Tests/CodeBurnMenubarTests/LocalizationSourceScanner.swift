@@ -23,6 +23,30 @@ import Foundation
 /// than inside the test so the standalone `swiftc` harness (this host cannot run
 /// `swift test`) can exercise the same code the suite does, instead of a
 /// reimplementation that could drift from it.
+///
+/// # Why it walks bytes, once
+///
+/// swift-testing runs suites concurrently in one process, so a slow test is not
+/// merely slow: it steals CPU from every wall-clock assertion running beside it.
+/// `ServeConnectionTests` asserts that cancelling a hung request returns inside
+/// 500 ms (#1333), and this scan used to burn 16 s of CPU next to it.
+///
+/// The cost was all algorithmic, not essential — the tree is 88 files and 1.3 MB:
+///
+/// - the file was walked once per call-site pattern, 26 times over;
+/// - every comparison built a fresh `Array` slice at each character position,
+///   some 34 million allocations per run;
+/// - `enclosingTypeName` rescanned the whole file from the top for every
+///   display-label property it found, which is quadratic;
+/// - and the four whole-tree scans the suite performs each re-read every file.
+///
+/// It now blanks comments in place, walks each file exactly once with a
+/// first-byte dispatch table, tracks the enclosing type as it passes it, and
+/// memoises the result so the suite's four scans cost one. Every pattern is
+/// ASCII; literal text is decoded only for the literals actually found.
+///
+/// Detection is unchanged. This is a performance fix, and
+/// `LocalizationCoverageTests` is its oracle.
 enum LocalizationSourceScanner {
 
     // MARK: - What counts as user-facing
@@ -86,86 +110,6 @@ enum LocalizationSourceScanner {
     /// `%@`, which is the routed form this scanner is asking for.
     static let untranslatableWords: Set<String> = ["codeburn", "tok", "usd"]
 
-    // MARK: - Findings
-
-    struct Finding: Equatable, CustomStringConvertible {
-        let file: String
-        let line: Int
-        let callSite: String
-        let literal: String
-
-        var description: String {
-            "\(file):\(line): \(callSite)\"\(literal)\" is shown to the user but never reaches the catalog — wrap it in L(\"…\")"
-        }
-    }
-
-    // MARK: - Scanning
-
-    /// Every user-facing literal in `directory` that is not routed through `L(…)`.
-    static func unroutedLiterals(in directory: URL) throws -> [Finding] {
-        var findings: [Finding] = []
-        for file in try swiftFiles(in: directory) {
-            let source = try String(contentsOf: file, encoding: .utf8)
-            findings += unroutedLiterals(
-                inSource: source,
-                fileName: file.lastPathComponent
-            )
-        }
-        return findings.sorted {
-            ($0.file, $0.line, $0.literal) < ($1.file, $1.line, $1.literal)
-        }
-    }
-
-    static func swiftFiles(in directory: URL) throws -> [URL] {
-        guard let walker = FileManager.default.enumerator(
-            at: directory,
-            includingPropertiesForKeys: nil
-        ) else { return [] }
-        return walker
-            .compactMap { $0 as? URL }
-            .filter { $0.pathExtension == "swift" }
-            .sorted { $0.path < $1.path }
-    }
-
-    /// The scan for one file's text. Split out so the rules are testable
-    /// against a source snippet rather than the repository.
-    static func unroutedLiterals(inSource source: String, fileName: String) -> [Finding] {
-        let code = Array(strippingComments(source))
-        var findings: [Finding] = []
-
-        for callSite in userFacingCallSites {
-            let needle = Array(callSite)
-            var index = 0
-            while index + needle.count <= code.count {
-                guard Array(code[index..<(index + needle.count)]) == needle,
-                      startsAWord(needle, at: index, in: code) else {
-                    index += 1
-                    continue
-                }
-                var cursor = index + needle.count
-                // The argument may be on the next line; whitespace is not a
-                // reason to stop looking for it.
-                while cursor < code.count, code[cursor].isWhitespace { cursor += 1 }
-                if cursor < code.count, code[cursor] == "\"",
-                   let literal = stringLiteral(in: code, startingAt: cursor),
-                   needsTranslation(literal.value) {
-                    findings.append(
-                        Finding(
-                            file: fileName,
-                            line: lineNumber(of: index, in: code),
-                            callSite: callSite,
-                            literal: literal.value
-                        )
-                    )
-                }
-                index += needle.count
-            }
-        }
-        // Call sites are scanned one kind at a time, so sort back into reading
-        // order — a failure message that jumps around the file is hard to act on.
-        return findings.sorted { ($0.line, $0.literal) < ($1.line, $1.literal) }
-    }
-
     // MARK: - Display-label properties
 
     /// Computed `String` properties this codebase uses to give an enum its
@@ -209,68 +153,422 @@ enum LocalizationSourceScanner {
         "Tier.displayName",
     ]
 
-    /// Bare literals returned from a display-label property.
-    static func unroutedLabelProperties(in directory: URL) throws -> [Finding] {
-        var findings: [Finding] = []
-        for file in try swiftFiles(in: directory) {
-            let source = try String(contentsOf: file, encoding: .utf8)
-            findings += unroutedLabelProperties(
-                inSource: source,
-                fileName: file.lastPathComponent
-            )
-        }
-        return findings.sorted {
-            ($0.file, $0.line, $0.literal) < ($1.file, $1.line, $1.literal)
+    // MARK: - Findings
+
+    struct Finding: Equatable, CustomStringConvertible {
+        let file: String
+        let line: Int
+        let callSite: String
+        let literal: String
+
+        var description: String {
+            "\(file):\(line): \(callSite)\"\(literal)\" is shown to the user but never reaches the catalog — wrap it in L(\"…\")"
         }
     }
 
-    static func unroutedLabelProperties(inSource source: String, fileName: String) -> [Finding] {
-        let code = Array(strippingComments(source))
-        var findings: [Finding] = []
+    /// Everything one walk of the tree produces, plus what it cost.
+    struct Scan: Sendable {
+        var unroutedLiterals: [Finding] = []
+        var unroutedLabelProperties: [Finding] = []
+        var requestedKeys: Set<String> = []
+        var fileCount = 0
+        var byteCount = 0
+        /// Wall time and CPU time for this scan. `LocalizationCoverageTests`
+        /// prints them once and fails if the CPU figure regresses past a
+        /// ceiling, because the cost of this scan is a property of the whole
+        /// suite, not just of this test.
+        var wallSeconds: Double = 0
+        /// CPU consumed by the scanning thread alone. Process CPU would bill
+        /// this scan for every test swift-testing runs beside it; the walk is
+        /// synchronous, so it never leaves the thread it is measured on.
+        var cpuSeconds: Double = 0
+    }
 
-        for property in displayLabelProperties {
-            let needle = Array("var \(property): String")
-            var index = 0
-            while index + needle.count <= code.count {
-                guard Array(code[index..<(index + needle.count)]) == needle else {
-                    index += 1
-                    continue
-                }
-                let owner = enclosingTypeName(before: index, in: code)
-                let qualified = "\(owner).\(property)"
-                index += needle.count
-                guard !untranslatedLabelProperties.contains(qualified) else { continue }
-                guard let body = propertyBody(in: code, after: index) else { continue }
-                for literal in valuePositionLiterals(in: Array(code[body])) where needsTranslation(literal.value) {
-                    findings.append(
+    // MARK: - Byte classification
+    //
+    // Every pattern this scanner matches is ASCII. A byte at or above 0x80 is a
+    // UTF-8 lead or continuation byte, and counts as a letter so a match can
+    // never start in the middle of non-ASCII text.
+
+    @inline(__always)
+    static func isLetter(_ b: UInt8) -> Bool {
+        (b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A) || b >= 0x80
+    }
+
+    @inline(__always)
+    static func isDigit(_ b: UInt8) -> Bool { b >= 0x30 && b <= 0x39 }
+
+    @inline(__always)
+    static func isIdentifier(_ b: UInt8) -> Bool {
+        isLetter(b) || isDigit(b) || b == UInt8(ascii: "_")
+    }
+
+    @inline(__always)
+    static func isSpace(_ b: UInt8) -> Bool {
+        b == 0x20 || b == 0x09 || b == 0x0A || b == 0x0D
+    }
+
+    @inline(__always)
+    static func isUppercase(_ b: UInt8) -> Bool { b >= 0x41 && b <= 0x5A }
+
+    /// Non-allocating prefix comparison. The previous shape,
+    /// `Array(code[i..<i+n]) == needle`, allocated an array at every character
+    /// position of every file for every pattern, and was most of the old cost.
+    @inline(__always)
+    static func matches(_ needle: [UInt8], at index: Int, in code: [UInt8]) -> Bool {
+        guard index + needle.count <= code.count else { return false }
+        for k in 0..<needle.count where code[index + k] != needle[k] { return false }
+        return true
+    }
+
+    // MARK: - One file, tokenized once
+
+    /// A class, not a struct, so the line index can be built lazily and shared.
+    final class ScannedFile {
+        let name: String
+        /// Source bytes with comment bodies blanked to spaces. Blanking rather
+        /// than deleting keeps every offset equal to the original file's, so
+        /// line numbers need no second mapping.
+        let code: [UInt8]
+
+        /// Built on the first finding, not up front: a passing run reports
+        /// nothing, and indexing every newline in the tree cost more than the
+        /// rest of the walk put together.
+        private var lineStarts: [Int]?
+
+        init(name: String, source: [UInt8]) {
+            self.name = name
+            self.code = LocalizationSourceScanner.strippingComments(source)
+        }
+
+        /// 1-based line for a byte offset, by binary search. The old linear
+        /// count from the top of the file was fine for a handful of findings and
+        /// quadratic the moment there were many.
+        func line(at offset: Int) -> Int {
+            let starts: [Int]
+            if let cached = lineStarts {
+                starts = cached
+            } else {
+                var built = [0]
+                built.reserveCapacity(code.count / 30)
+                for i in 0..<code.count where code[i] == 0x0A { built.append(i + 1) }
+                lineStarts = built
+                starts = built
+            }
+            var low = 0
+            var high = starts.count - 1
+            while low < high {
+                let mid = (low + high + 1) / 2
+                if starts[mid] <= offset { low = mid } else { high = mid - 1 }
+            }
+            return low + 1
+        }
+    }
+
+    // MARK: - Entry points
+
+    /// One walk of the tree, memoised.
+    ///
+    /// The suite asks for literals, label properties and keys in four separate
+    /// tests; each used to re-read and re-tokenize all 88 files. They are all
+    /// answers to the same walk, and the sources cannot change while the suite
+    /// runs.
+    static func scan(directory: URL) throws -> Scan {
+        try cache.scan(directory)
+    }
+
+    /// Every user-facing literal in `directory` that is not routed through `L(…)`.
+    static func unroutedLiterals(in directory: URL) throws -> [Finding] {
+        try scan(directory: directory).unroutedLiterals
+    }
+
+    /// Bare literals returned from a display-label property.
+    static func unroutedLabelProperties(in directory: URL) throws -> [Finding] {
+        try scan(directory: directory).unroutedLabelProperties
+    }
+
+    /// Every key passed to `L(…)` anywhere under `directory`.
+    ///
+    /// The other direction of the same guard: `unroutedLiterals` catches copy
+    /// that never became a key, this catches a key that never became an entry.
+    /// Both ship English in a zh-Hans build, and neither is visible to the
+    /// compiler or to a catalog-versus-catalog diff.
+    static func requestedKeys(in directory: URL) throws -> Set<String> {
+        try scan(directory: directory).requestedKeys
+    }
+
+    /// Swift sources under `directory`, skipping hidden trees such as `.build`
+    /// and anything inside a nested package.
+    static func swiftFiles(in directory: URL) throws -> [URL] {
+        guard let walker = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else { return [] }
+        return walker
+            .compactMap { $0 as? URL }
+            .filter { $0.pathExtension == "swift" }
+            .sorted { $0.path < $1.path }
+    }
+
+    // The per-source entry points. The suite uses these to test the rules
+    // against a snippet rather than the repository.
+
+    /// The scan for one file's text. Split out so the rules are testable
+    /// against a source snippet rather than the repository.
+    static func unroutedLiterals(inSource source: String, fileName: String) -> [Finding] {
+        analyze(ScannedFile(name: fileName, source: [UInt8](source.utf8))).unroutedLiterals
+    }
+
+    static func unroutedLabelProperties(inSource source: String, fileName: String) -> [Finding] {
+        analyze(ScannedFile(name: fileName, source: [UInt8](source.utf8))).unroutedLabelProperties
+    }
+
+    static func requestedKeys(inSource source: String) -> Set<String> {
+        analyze(ScannedFile(name: "", source: [UInt8](source.utf8))).requestedKeys
+    }
+
+    // MARK: - Dispatch tables
+
+    /// Call-site patterns bucketed by first byte, so one walk tests only the two
+    /// or three patterns that could start here instead of walking the file once
+    /// per pattern.
+    private static let callSiteTable: [[(needle: [UInt8], text: String)]] = {
+        var table = [[(needle: [UInt8], text: String)]](repeating: [], count: 256)
+        for site in userFacingCallSites {
+            let bytes = [UInt8](site.utf8)
+            guard let first = bytes.first else { continue }
+            table[Int(first)].append((bytes, site))
+        }
+        // Longest first, so `.accessibilityLabel(` wins over any prefix of it.
+        for i in table.indices { table[i].sort { $0.needle.count > $1.needle.count } }
+        return table
+    }()
+
+    /// `var displayName: String` and friends, matched whole.
+    private static let labelPropertyNeedles: [(needle: [UInt8], property: String)] =
+        displayLabelProperties.map { ([UInt8]("var \($0): String".utf8), $0) }
+
+    private static let typeKeywords: [[UInt8]] =
+        ["enum ", "struct ", "final class ", "class ", "extension "].map { [UInt8]($0.utf8) }
+
+    /// Which of the four jobs a byte could possibly begin. Consulted once per
+    /// byte, so the overwhelming majority cost one array read and one test.
+    private static let interesting: [UInt8] = {
+        var flags = [UInt8](repeating: 0, count: 256)
+        for site in userFacingCallSites {
+            if let first = site.utf8.first { flags[Int(first)] |= 0b0001 }
+        }
+        flags[Int(UInt8(ascii: "v"))] |= 0b0010          // var <label>: String
+        flags[Int(UInt8(ascii: "L"))] |= 0b0100          // L(
+        for b in "esfc" { flags[Int(b.asciiValue!)] |= 0b1000 }  // type declarations
+        return flags
+    }()
+
+    /// The same test on the first *two* bytes.
+    ///
+    /// `.` is roughly one byte in thirty of Swift source and carries ten
+    /// candidate call sites; `f` carries `func`/`final class`. Confirming the
+    /// second byte before touching the candidate list turns almost all of those
+    /// into a single table read — which matters because CI runs `swift test`
+    /// unoptimised, where every `matches` call is a real call with a retain on
+    /// the pattern array.
+    private static let interesting2: [UInt8] = {
+        var flags = [UInt8](repeating: 0, count: 256 * 256)
+        func mark(_ prefix: String, _ bit: UInt8) {
+            let bytes = Array(prefix.utf8)
+            guard bytes.count >= 2 else {
+                // One-byte trigger: every second byte is a possible follow-on.
+                for second in 0..<256 { flags[Int(bytes[0]) << 8 | second] |= bit }
+                return
+            }
+            flags[Int(bytes[0]) << 8 | Int(bytes[1])] |= bit
+        }
+        for site in userFacingCallSites { mark(site, 0b0001) }
+        mark("va", 0b0010)
+        mark("L(", 0b0100)
+        for keyword in ["en", "st", "fi", "cl", "ex"] { mark(keyword, 0b1000) }
+        return flags
+    }()
+
+    // MARK: - The single pass
+
+    /// Call sites, display-label properties, `L(…)` keys and the enclosing-type
+    /// index, all from one left-to-right walk.
+    ///
+    /// Tracking the enclosing type as the walk passes it is what removes the
+    /// quadratic lookup: "nearest preceding declaration" is just the last one
+    /// seen, which is exactly what a forward walk already knows.
+    static func analyze(_ file: ScannedFile) -> Scan {
+        let code = file.code
+        var scan = Scan()
+        scan.fileCount = 1
+        scan.byteCount = code.count
+        var owner = "?"
+        var i = 0
+
+        while i < code.count {
+            let b = code[i]
+            var flags = interesting[Int(b)]
+            if flags == 0 {
+                i += 1
+                continue
+            }
+            // Confirm against the two-byte table before doing any real work.
+            flags &= i + 1 < code.count ? interesting2[Int(b) << 8 | Int(code[i + 1])] : 0
+            if flags == 0 {
+                i += 1
+                continue
+            }
+
+            if flags & 0b1000 != 0, let type = typeDeclaration(in: code, at: i) {
+                owner = type
+                i += 1
+                continue
+            }
+
+            if flags & 0b0001 != 0, let site = callSite(in: code, at: i) {
+                var cursor = i + site.needle.count
+                // The argument may be on the next line; whitespace is not a
+                // reason to stop looking for it.
+                while cursor < code.count, isSpace(code[cursor]) { cursor += 1 }
+                if cursor < code.count, code[cursor] == UInt8(ascii: "\""),
+                   let literal = stringLiteral(in: code, startingAt: cursor),
+                   needsTranslation(literal.value) {
+                    scan.unroutedLiterals.append(
                         Finding(
-                            file: fileName,
-                            line: lineNumber(of: body.lowerBound + literal.offset, in: code),
-                            callSite: "\(qualified): ",
+                            file: file.name,
+                            line: file.line(at: i),
+                            callSite: site.text,
                             literal: literal.value
                         )
                     )
                 }
+                i += site.needle.count
+                continue
             }
+
+            if flags & 0b0010 != 0 {
+                var matched = false
+                for entry in labelPropertyNeedles where matches(entry.needle, at: i, in: code) {
+                    scan.unroutedLabelProperties += labelFindings(
+                        in: file, after: i + entry.needle.count, property: entry.property, owner: owner
+                    )
+                    i += entry.needle.count
+                    matched = true
+                    break
+                }
+                if matched { continue }
+            }
+
+            if flags & 0b0100 != 0, let key = requestedKey(in: code, at: i) {
+                scan.requestedKeys.insert(key)
+            }
+            i += 1
         }
-        return findings.sorted { ($0.line, $0.literal) < ($1.line, $1.literal) }
+
+        scan.unroutedLiterals.sort { ($0.line, $0.literal) < ($1.line, $1.literal) }
+        scan.unroutedLabelProperties.sort { ($0.line, $0.literal) < ($1.line, $1.literal) }
+        return scan
+    }
+
+    /// The type name declared at `index`, if one is.
+    private static func typeDeclaration(in code: [UInt8], at index: Int) -> String? {
+        for needle in typeKeywords
+        where matches(needle, at: index, in: code) && startsAWord(needle, at: index, in: code) {
+            var j = index + needle.count
+            let nameStart = j
+            while j < code.count, isIdentifier(code[j]) { j += 1 }
+            return j > nameStart ? String(decoding: code[nameStart..<j], as: UTF8.self) : nil
+        }
+        return nil
+    }
+
+    /// The user-facing call site starting at `index`, if one is.
+    private static func callSite(in code: [UInt8], at index: Int) -> (needle: [UInt8], text: String)? {
+        for candidate in callSiteTable[Int(code[index])]
+        where matches(candidate.needle, at: index, in: code)
+            && startsAWord(candidate.needle, at: index, in: code) {
+            return candidate
+        }
+        return nil
+    }
+
+    /// Bare literals in the body of one display-label property.
+    private static func labelFindings(
+        in file: ScannedFile,
+        after index: Int,
+        property: String,
+        owner: String
+    ) -> [Finding] {
+        let qualified = "\(owner).\(property)"
+        guard !untranslatedLabelProperties.contains(qualified) else { return [] }
+        guard let body = propertyBody(in: file.code, after: index) else { return [] }
+        return valuePositionLiterals(in: file.code, range: body)
+            .filter { needsTranslation($0.value) }
+            .map {
+                Finding(
+                    file: file.name,
+                    line: file.line(at: $0.offset),
+                    callSite: "\(qualified): ",
+                    literal: $0.value
+                )
+            }
+    }
+
+    /// The key of an `L("…")` call starting at `index`, if that is what this is.
+    private static func requestedKey(in code: [UInt8], at index: Int) -> String? {
+        // `L` has to be the whole identifier: `URL(`, `someL(` and `a.L(` are
+        // not the localization function.
+        if index > 0 {
+            let previous = code[index - 1]
+            if isIdentifier(previous) || previous == UInt8(ascii: ".") { return nil }
+        }
+        var cursor = index + 1
+        guard cursor < code.count, code[cursor] == UInt8(ascii: "(") else { return nil }
+        cursor += 1
+        while cursor < code.count, isSpace(code[cursor]) { cursor += 1 }
+        guard cursor < code.count, code[cursor] == UInt8(ascii: "\""),
+              let literal = stringLiteral(in: code, startingAt: cursor) else { return nil }
+        // The catalog stores the unescaped text, which is what NSBundle matches
+        // against, so undo the escapes the source carries.
+        return unescaped(literal.value)
+    }
+
+    /// Whether a match is the start of the call it names rather than the tail of
+    /// a longer identifier.
+    ///
+    /// Without this `Label(` matches inside `.accessibilityLabel(`, and
+    /// `Button(` inside `addButton(withTitle:`, reporting one string twice. A
+    /// type name (`Text`, `Label`, `NSMenuItem`) is also rejected after a dot,
+    /// since that is a member access; a method (`addButton`, `sectionCaption`)
+    /// is not, because a dot is exactly how it is normally called.
+    static func startsAWord(_ needle: [UInt8], at index: Int, in code: [UInt8]) -> Bool {
+        guard index > 0, let first = needle.first else { return true }
+        // A needle written as a member (`.accessibilityLabel(`) carries its own
+        // boundary: the dot can only follow the receiver.
+        guard isLetter(first) else { return true }
+        let previous = code[index - 1]
+        if isIdentifier(previous) { return false }
+        if previous == UInt8(ascii: "."), isUppercase(first) { return false }
+        return true
     }
 
     /// The brace-balanced body that follows a property declaration.
-    static func propertyBody(in code: [Character], after index: Int) -> Range<Int>? {
+    static func propertyBody(in code: [UInt8], after index: Int) -> Range<Int>? {
         var i = index
-        while i < code.count, code[i] != "{" {
+        while i < code.count, code[i] != UInt8(ascii: "{") {
             // A declaration and its body are separated by whitespace only; a
             // computed property written with `=` is a stored one, not ours.
-            if !code[i].isWhitespace { return nil }
+            if !isSpace(code[i]) { return nil }
             i += 1
         }
         guard i < code.count else { return nil }
         let start = i + 1
         var depth = 0
         while i < code.count {
-            if code[i] == "{" { depth += 1 }
-            if code[i] == "}" {
+            if code[i] == UInt8(ascii: "{") { depth += 1 }
+            if code[i] == UInt8(ascii: "}") {
                 depth -= 1
                 if depth == 0 { return start..<i }
             }
@@ -288,17 +586,20 @@ enum LocalizationSourceScanner {
     /// (arguments to machinery, which are not copy). It also means a literal
     /// already wrapped in `L(…)` sits at depth one and is skipped, which is
     /// exactly the routed form this scan is asking for.
-    static func valuePositionLiterals(in code: [Character]) -> [(value: String, offset: Int)] {
+    static func valuePositionLiterals(
+        in code: [UInt8],
+        range: Range<Int>
+    ) -> [(value: String, offset: Int)] {
         var found: [(value: String, offset: Int)] = []
         var depth = 0
-        var i = 0
-        while i < code.count {
+        var i = range.lowerBound
+        while i < range.upperBound {
             switch code[i] {
-            case "(", "[":
+            case UInt8(ascii: "("), UInt8(ascii: "["):
                 depth += 1
-            case ")", "]":
+            case UInt8(ascii: ")"), UInt8(ascii: "]"):
                 depth -= 1
-            case "\"":
+            case UInt8(ascii: "\""):
                 guard let literal = stringLiteral(in: code, startingAt: i) else { break }
                 if depth == 0 { found.append((value: literal.value, offset: i)) }
                 i = literal.end
@@ -311,126 +612,106 @@ enum LocalizationSourceScanner {
         return found
     }
 
-    /// The nearest `enum`/`struct`/`class`/`extension` name declared above
-    /// `index`, so a denylist entry can name the type it exempts.
-    static func enclosingTypeName(before index: Int, in code: [Character]) -> String {
-        let keywords = ["enum ", "struct ", "final class ", "class ", "extension "].map(Array.init)
-        var best = "?"
-        var i = 0
-        // One pass in source order, so the *nearest* preceding declaration wins.
-        // Scanning keyword-by-keyword instead would make the answer depend on
-        // the order of the keyword list: `enum PlanType` nested inside
-        // `struct CodexUsage` would report the outer type and quietly miss its
-        // denylist entry.
-        while i < min(index, code.count) {
-            for needle in keywords where i + needle.count <= code.count {
-                guard Array(code[i..<(i + needle.count)]) == needle,
-                      startsAWord(needle, at: i, in: code) else { continue }
-                var j = i + needle.count
-                var name = ""
-                while j < code.count, code[j].isLetter || code[j].isNumber || code[j] == "_" {
-                    name.append(code[j])
-                    j += 1
-                }
-                if !name.isEmpty { best = name }
-            }
-            i += 1
-        }
-        return best
-    }
+    // MARK: - Lexing
 
-    // MARK: - Keys the code asks for
-
-    /// Every key passed to `L(…)` anywhere under `directory`.
+    /// Replaces comment bodies with spaces, keeping newlines so byte offsets and
+    /// line numbers still match the original file. Without this a doc comment
+    /// that *mentions* `Text("literal")` — Localization.swift has one — reads as
+    /// a violation.
     ///
-    /// The other direction of the same guard: `unroutedLiterals` catches copy
-    /// that never became a key, this catches a key that never became an entry.
-    /// Both ship English in a zh-Hans build, and neither is visible to the
-    /// compiler or to a catalog-versus-catalog diff.
-    static func requestedKeys(in directory: URL) throws -> Set<String> {
-        var keys: Set<String> = []
-        for file in try swiftFiles(in: directory) {
-            let source = try String(contentsOf: file, encoding: .utf8)
-            keys.formUnion(requestedKeys(inSource: source))
-        }
-        return keys
-    }
-
-    static func requestedKeys(inSource source: String) -> Set<String> {
-        let chars = Array(strippingComments(source))
-        var keys: Set<String> = []
+    /// Blanks in place rather than building a second buffer: the old version
+    /// appended to a `String` one `Character` at a time, which was a quarter of
+    /// a second per run on its own.
+    static func strippingComments(_ source: [UInt8]) -> [UInt8] {
+        var out = source
+        let slash = UInt8(ascii: "/")
+        let star = UInt8(ascii: "*")
+        let quote = UInt8(ascii: "\"")
+        let space = UInt8(ascii: " ")
         var i = 0
-        while i < chars.count {
-            defer { i += 1 }
-            guard chars[i] == "L" else { continue }
-            // `L` has to be the whole identifier: `URL(`, `someL(` and `a.L(`
-            // are not the localization function.
-            if i > 0 {
-                let previous = chars[i - 1]
-                if previous.isLetter || previous.isNumber || previous == "_" || previous == "." {
-                    continue
-                }
-            }
-            var cursor = i + 1
-            guard cursor < chars.count, chars[cursor] == "(" else { continue }
-            cursor += 1
-            while cursor < chars.count, chars[cursor].isWhitespace { cursor += 1 }
-            guard cursor < chars.count, chars[cursor] == "\"",
-                  let literal = stringLiteral(in: chars, startingAt: cursor) else { continue }
-            // The catalog stores the unescaped text, which is what NSBundle
-            // matches against, so undo the escapes the source carries.
-            keys.insert(unescaped(literal.value))
-        }
-        return keys
-    }
-
-    /// Turns a source-level literal body into the string it denotes. Only the
-    /// escapes the catalog actually uses are handled; an interpolated key would
-    /// not be a constant key at all, so it is left alone and will simply fail to
-    /// match an entry.
-    static func unescaped(_ literal: String) -> String {
-        var out = ""
-        let chars = Array(literal)
-        var i = 0
-        while i < chars.count {
-            guard chars[i] == "\\", i + 1 < chars.count else {
-                out.append(chars[i])
-                i += 1
+        while i < out.count {
+            // A string literal can contain "//" (a URL), so strings win.
+            if out[i] == quote, let literal = stringLiteral(in: source, startingAt: i) {
+                i = literal.end
                 continue
             }
-            switch chars[i + 1] {
-            case "n": out.append("\n")
-            case "t": out.append("\t")
-            case "r": out.append("\r")
-            case "\"": out.append("\"")
-            case "'": out.append("'")
-            case "\\": out.append("\\")
-            default:
-                out.append(chars[i])
-                out.append(chars[i + 1])
+            if out[i] == slash, i + 1 < out.count, out[i + 1] == slash {
+                while i < out.count, out[i] != 0x0A {
+                    out[i] = space
+                    i += 1
+                }
+                continue
             }
-            i += 2
+            if out[i] == slash, i + 1 < out.count, out[i + 1] == star {
+                // Block comments nest in Swift.
+                var depth = 0
+                while i < out.count {
+                    if out[i] == slash, i + 1 < out.count, out[i + 1] == star {
+                        depth += 1
+                        out[i] = space
+                        out[i + 1] = space
+                        i += 2
+                        continue
+                    }
+                    if out[i] == star, i + 1 < out.count, out[i + 1] == slash {
+                        depth -= 1
+                        out[i] = space
+                        out[i + 1] = space
+                        i += 2
+                        if depth == 0 { break }
+                        continue
+                    }
+                    if out[i] != 0x0A { out[i] = space }
+                    i += 1
+                }
+                continue
+            }
+            i += 1
         }
         return out
     }
 
-    /// Whether a match is the start of the call it names rather than the tail of
-    /// a longer identifier.
+    /// Reads the Swift string literal beginning at `start`, returning its
+    /// contents and the index just past the closing quote. Handles `"""` blocks
+    /// and backslash escapes; returns nil for an unterminated literal.
     ///
-    /// Without this `Label(` matches inside `.accessibilityLabel(`, and
-    /// `Button(` inside `addButton(withTitle:`, reporting one string twice. A
-    /// type name (`Text`, `Label`, `NSMenuItem`) is also rejected after a dot,
-    /// since that is a member access; a method (`addButton`, `sectionCaption`)
-    /// is not, because a dot is exactly how it is normally called.
-    static func startsAWord(_ needle: [Character], at index: Int, in code: [Character]) -> Bool {
-        guard index > 0, let first = needle.first else { return true }
-        // A needle written as a member (`.accessibilityLabel(`) carries its own
-        // boundary: the dot can only follow the receiver.
-        guard first.isLetter else { return true }
-        let previous = code[index - 1]
-        if previous.isLetter || previous.isNumber || previous == "_" { return false }
-        if previous == ".", first.isUppercase { return false }
-        return true
+    /// The value is the raw source between the delimiters — escapes included, so
+    /// `\(` survives for the interpolation stripper to recognise — decoded once
+    /// the extent is known rather than accumulated byte by byte.
+    static func stringLiteral(
+        in code: [UInt8],
+        startingAt start: Int
+    ) -> (value: String, end: Int)? {
+        let quote = UInt8(ascii: "\"")
+        let backslash = UInt8(ascii: "\\")
+        guard start < code.count, code[start] == quote else { return nil }
+
+        let isMultiline = start + 2 < code.count
+            && code[start + 1] == quote
+            && code[start + 2] == quote
+        let valueStart = start + (isMultiline ? 3 : 1)
+
+        var i = valueStart
+        while i < code.count {
+            if code[i] == backslash {
+                // Keep the backslash: `\(` has to survive for the interpolation
+                // stripper to recognise it.
+                i += 2
+                continue
+            }
+            if code[i] == quote {
+                if isMultiline {
+                    if i + 2 < code.count, code[i + 1] == quote, code[i + 2] == quote {
+                        return (String(decoding: code[valueStart..<i], as: UTF8.self), i + 3)
+                    }
+                } else {
+                    return (String(decoding: code[valueStart..<i], as: UTF8.self), i + 1)
+                }
+            }
+            if !isMultiline, code[i] == 0x0A { return nil }
+            i += 1
+        }
+        return nil
     }
 
     // MARK: - Rules
@@ -479,104 +760,94 @@ enum LocalizationSourceScanner {
         return out
     }
 
-    // MARK: - Lexing
-
-    /// Replaces comment bodies with spaces, keeping newlines so reported line
-    /// numbers still match the file. Without this a doc comment that *mentions*
-    /// `Text("literal")` — Localization.swift has one — reads as a violation.
-    static func strippingComments(_ source: String) -> String {
+    /// Turns a source-level literal body into the string it denotes. Only the
+    /// escapes the catalog actually uses are handled; an interpolated key would
+    /// not be a constant key at all, so it is left alone and will simply fail to
+    /// match an entry.
+    static func unescaped(_ literal: String) -> String {
         var out = ""
-        let chars = Array(source)
+        let chars = Array(literal)
         var i = 0
         while i < chars.count {
-            // A string literal can contain "//" (a URL), so strings win.
-            if chars[i] == "\"" {
-                if let literal = stringLiteral(in: chars, startingAt: i) {
-                    out += String(chars[i..<literal.end])
-                    i = literal.end
-                    continue
-                }
-            }
-            if chars[i] == "/", i + 1 < chars.count, chars[i + 1] == "/" {
-                while i < chars.count, chars[i] != "\n" { out.append(" "); i += 1 }
+            guard chars[i] == "\\", i + 1 < chars.count else {
+                out.append(chars[i])
+                i += 1
                 continue
             }
-            if chars[i] == "/", i + 1 < chars.count, chars[i + 1] == "*" {
-                // Block comments nest in Swift.
-                var depth = 0
-                while i < chars.count {
-                    if chars[i] == "/", i + 1 < chars.count, chars[i + 1] == "*" {
-                        depth += 1
-                        out += "  "
-                        i += 2
-                        continue
-                    }
-                    if chars[i] == "*", i + 1 < chars.count, chars[i + 1] == "/" {
-                        depth -= 1
-                        out += "  "
-                        i += 2
-                        if depth == 0 { break }
-                        continue
-                    }
-                    out.append(chars[i] == "\n" ? "\n" : " ")
-                    i += 1
-                }
-                continue
+            switch chars[i + 1] {
+            case "n": out.append("\n")
+            case "t": out.append("\t")
+            case "r": out.append("\r")
+            case "\"": out.append("\"")
+            case "'": out.append("'")
+            case "\\": out.append("\\")
+            default:
+                out.append(chars[i])
+                out.append(chars[i + 1])
             }
-            out.append(chars[i])
-            i += 1
+            i += 2
         }
         return out
     }
 
-    /// Reads the Swift string literal beginning at `start`, returning its
-    /// contents and the index just past the closing quote. Handles `"""` blocks
-    /// and backslash escapes; returns nil for an unterminated literal.
-    static func stringLiteral(
-        in chars: [Character],
-        startingAt start: Int
-    ) -> (value: String, end: Int)? {
-        guard start < chars.count, chars[start] == "\"" else { return nil }
+    // MARK: - Memoisation
 
-        let isMultiline = start + 2 < chars.count
-            && chars[start + 1] == "\""
-            && chars[start + 2] == "\""
-        let delimiterLength = isMultiline ? 3 : 1
+    /// Caches one `Scan` per directory. swift-testing runs the suite's tests
+    /// concurrently, so this is lock-guarded and the first caller does the work.
+    private final class ScanCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var scans: [String: Scan] = [:]
 
-        var value = ""
-        var i = start + delimiterLength
-        while i < chars.count {
-            if chars[i] == "\\" {
-                // Keep the backslash: `\(` has to survive for the
-                // interpolation stripper to recognise it.
-                value.append(chars[i])
-                if i + 1 < chars.count { value.append(chars[i + 1]) }
-                i += 2
-                continue
+        func scan(_ directory: URL) throws -> Scan {
+            let key = directory.standardizedFileURL.path
+            lock.lock()
+            if let cached = scans[key] {
+                lock.unlock()
+                return cached
             }
-            if chars[i] == "\"" {
-                if isMultiline {
-                    if i + 2 < chars.count, chars[i + 1] == "\"", chars[i + 2] == "\"" {
-                        return (value, i + 3)
-                    }
-                } else {
-                    return (value, i + 1)
-                }
-            }
-            if !isMultiline, chars[i] == "\n" { return nil }
-            value.append(chars[i])
-            i += 1
+            lock.unlock()
+
+            let fresh = try LocalizationSourceScanner.walk(directory)
+
+            lock.lock()
+            // A concurrent caller may have finished first; either result is the
+            // same scan of the same unchanging sources, so keep whichever landed.
+            let stored = scans[key] ?? fresh
+            scans[key] = stored
+            lock.unlock()
+            return stored
         }
-        return nil
     }
 
-    static func lineNumber(of index: Int, in chars: [Character]) -> Int {
-        var line = 1
-        var i = 0
-        while i < index, i < chars.count {
-            if chars[i] == "\n" { line += 1 }
-            i += 1
+    private static let cache = ScanCache()
+
+    /// The uncached walk. Reads each file once and runs the single pass over it.
+    private static func walk(_ directory: URL) throws -> Scan {
+        let wallStart = ContinuousClock.now
+        let cpuStart = cpuSeconds()
+
+        var total = Scan()
+        for url in try swiftFiles(in: directory) {
+            let bytes = [UInt8](try Data(contentsOf: url))
+            let one = analyze(ScannedFile(name: url.lastPathComponent, source: bytes))
+            total.unroutedLiterals += one.unroutedLiterals
+            total.unroutedLabelProperties += one.unroutedLabelProperties
+            total.requestedKeys.formUnion(one.requestedKeys)
+            total.fileCount += 1
+            total.byteCount += one.byteCount
         }
-        return line
+        total.unroutedLiterals.sort { ($0.file, $0.line, $0.literal) < ($1.file, $1.line, $1.literal) }
+        total.unroutedLabelProperties.sort { ($0.file, $0.line, $0.literal) < ($1.file, $1.line, $1.literal) }
+
+        let elapsed = ContinuousClock.now - wallStart
+        total.wallSeconds = Double(elapsed.components.seconds)
+            + Double(elapsed.components.attoseconds) / 1e18
+        total.cpuSeconds = cpuSeconds() - cpuStart
+        return total
+    }
+
+    /// CPU time consumed by the calling thread, in seconds.
+    private static func cpuSeconds() -> Double {
+        Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)) / 1_000_000_000
     }
 }
