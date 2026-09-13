@@ -2165,48 +2165,60 @@ final class AppStore {
     /// Aggregate quota status across all connected providers, used by the menu
     /// bar flame icon (color) and the popover warning row. Severity = worst
     /// observed across any provider's worst window. Warning providers are
-    /// every connected provider at >= 70% utilization.
+    /// every connected provider at >= 70% utilization, each carrying the window
+    /// that put it there so the row can name it (`QuotaWarningPresentation`).
     struct AggregateQuotaStatus {
         let severity: QuotaSummary.Severity
-        let warnings: [(name: String, percent: Double)]   // sorted desc by percent
+        let warnings: [QuotaWarning]   // sorted desc by percent
     }
 
     var aggregateQuotaStatus: AggregateQuotaStatus {
-        var providers: [(name: String, percent: Double)] = []
+        var providers: [QuotaWarning] = []
+        func include(_ name: String, _ windows: [QuotaWarning.Candidate]) {
+            if let worst = QuotaWarning.worst(name: name, windows: windows) { providers.append(worst) }
+        }
         if let usage = subscription, shouldIncludeCachedQuota(loadState: subscriptionLoadState) {
-            let worst = [
-                usage.fiveHourPercent,
-                usage.sevenDayPercent,
-                usage.sevenDayOpusPercent,
-                usage.sevenDaySonnetPercent,
-            ].compactMap { $0 }.max() ?? 0
-            if worst > 0 { providers.append(("Claude", worst)) }
+            // Labelled as `claudeQuotaSummary` labels them, so the warning row
+            // names a window the way the Plan tab and the Capacity Dock do.
+            include("Claude", [
+                .init(label: "5-hour", percent: usage.fiveHourPercent, resetsAt: usage.fiveHourResetsAt),
+                .init(label: "Weekly", percent: usage.sevenDayPercent, resetsAt: usage.sevenDayResetsAt),
+                .init(label: "Weekly · Opus", percent: usage.sevenDayOpusPercent, resetsAt: usage.sevenDayOpusResetsAt),
+                .init(label: "Weekly · Sonnet", percent: usage.sevenDaySonnetPercent, resetsAt: usage.sevenDaySonnetResetsAt),
+            ])
         }
         if let usage = codexUsage, shouldIncludeCachedQuota(loadState: codexLoadState) {
-            let worst = max(usage.primary?.usedPercent ?? 0, usage.secondary?.usedPercent ?? 0)
-            if worst > 0 { providers.append(("Codex", worst)) }
+            include("Codex", [usage.primary, usage.secondary].compactMap { $0 }.map {
+                QuotaWarning.Candidate(label: $0.windowLabel, percent: $0.usedPercent, resetsAt: $0.resetsAt)
+            })
         }
         if let usage = kimiUsage, shouldIncludeCachedQuota(loadState: kimiLoadState) {
-            let worst = max(usage.primary?.usedPercent ?? 0, usage.details.map(\.usedPercent).max() ?? 0)
-            if worst > 0 { providers.append(("Kimi Code", worst)) }
+            var windows: [QuotaWarning.Candidate] = []
+            if let w = usage.primary {
+                windows.append(.init(label: w.label, percent: w.usedPercent, resetsAt: w.resetsAt))
+            }
+            windows += usage.details.map {
+                QuotaWarning.Candidate(label: $0.label, percent: $0.usedPercent, resetsAt: $0.resetsAt)
+            }
+            include("Kimi Code", windows)
         }
         if let usage = geminiUsage, shouldIncludeCachedQuota(loadState: geminiLoadState) {
-            let worst = usage.details.map(\.usedPercent).max() ?? 0
-            if worst > 0 { providers.append(("Gemini", worst)) }
+            include("Gemini", usage.details.map {
+                QuotaWarning.Candidate(label: $0.label, percent: $0.usedPercent, resetsAt: $0.resetsAt)
+            })
         }
         if let usage = copilotUsage, shouldIncludeCachedQuota(loadState: copilotLoadState) {
-            let worst = usage.details.map(\.usedPercent).max() ?? 0
-            if worst > 0 { providers.append(("Copilot", worst)) }
+            include("Copilot", usage.details.map {
+                QuotaWarning.Candidate(label: $0.label, percent: $0.usedPercent, resetsAt: $0.resetsAt)
+            })
         }
         if let usage = antigravityUsage, shouldIncludeCachedQuota(loadState: antigravityLoadState) {
-            let worst = usage.details.map(\.usedPercent).max() ?? 0
-            if worst > 0 { providers.append(("Antigravity", worst)) }
+            include("Antigravity", usage.details.map {
+                QuotaWarning.Candidate(label: $0.label, percent: $0.usedPercent, resetsAt: $0.resetsAt)
+            })
         }
-        let worst = providers.map(\.percent).max() ?? 0
-        let severity = QuotaSummary.severity(for: worst / 100)
-        let sorted = providers.sorted { $0.percent > $1.percent }
-        let warnings = sorted.filter { $0.percent >= 70 }
-        return AggregateQuotaStatus(severity: severity, warnings: warnings)
+        let result = QuotaWarningPresentation.aggregate(providers)
+        return AggregateQuotaStatus(severity: result.severity, warnings: result.warnings)
     }
 
     private func shouldIncludeCachedQuota(loadState: SubscriptionLoadState) -> Bool {

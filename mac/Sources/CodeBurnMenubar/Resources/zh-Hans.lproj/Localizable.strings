@@ -201,7 +201,7 @@
 "Loading %@…" = "正在载入%@…";
 "Your AI Bill, Itemized" = "你的 AI 账单，逐项明细";
 "%@ over limit (%lld%%)" = "%@ 已超限（%lld%%）";
-"%@ of quota used" = "已用配额 %@";
+"resets in %@" = "%@后重置";
 "Change accent color" = "更改主题色";
 "CLI %@ available" = "命令行工具 %@ 可用";
 "Update now" = "立即更新";

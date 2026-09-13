@@ -207,7 +207,7 @@
 "Loading %@…" = "Loading %@…";
 "Your AI Bill, Itemized" = "Your AI Bill, Itemized";
 "%@ over limit (%lld%%)" = "%@ over limit (%lld%%)";
-"%@ of quota used" = "%@ of quota used";
+"resets in %@" = "resets in %@";
 "Change accent color" = "Change accent color";
 "CLI %@ available" = "CLI %@ available";
 "Update now" = "Update now";

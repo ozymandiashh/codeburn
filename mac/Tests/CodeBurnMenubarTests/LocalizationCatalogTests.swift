@@ -239,6 +239,12 @@ struct LocalizationCatalogTests {
         let countdown = try Self.localized("%lldh %lldm", "zh-Hans", 2, 11)
         #expect(countdown == "2 小时 11 分")
 
+        // The quota warning banner's reset clause wraps that same countdown.
+        let englishReset = try Self.localized("resets in %@", "en", "3h 12m")
+        #expect(englishReset == "resets in 3h 12m")
+        let chineseReset = try Self.localized("resets in %@", "zh-Hans", "3 小时 12 分")
+        #expect(chineseReset == "3 小时 12 分后重置")
+
         let cacheHit = try Self.localized("%@%% cache hit", "zh-Hans", "87")
         #expect(cacheHit == "缓存命中 87%")
     }
