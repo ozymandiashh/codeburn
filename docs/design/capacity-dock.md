@@ -115,7 +115,21 @@ V1 does not include:
 - Under that, one line says whether the window lasts: `Lasts until reset` or
   `Runs out in 2d 8h`, and on windows of six hours or less, where a linear
   run-out ETA is not defensible off a single burst, the pace stage instead
-  (`On pace`, `40% in deficit`, `30% in reserve`). It is the same whole-window
+  (`On pace`, `40% in deficit`, `30% in reserve`). A longer window that lasts
+  with room to spare also says how much of it that pace leaves unused:
+  `Lasts until reset · ~44% unused` (5% used 15 hours into a 7-day window
+  projects to 56% at reset). The share is `100 − projected`, the complement of
+  the projection in the tooltip (and of the Plan tab's `… · 56% at reset`
+  wherever that caption runs the same linear pace), rounded to a whole
+  percent, and appears only when that rounded figure is at least 10 points and
+  the window sits outside the two-point on-pace band; a single-digit leftover
+  is inside what a
+  linear projection cannot tell apart from finishing at the limit, so it stays
+  the plain verdict. It is a different quantity from a short window's
+  `in reserve`, which is the gap to the elapsed pace right now, not the
+  leftover at the reset (the leftover is that gap divided by the elapsed
+  fraction). "At this pace" does not fit the two-column cell, so it lives in
+  the tooltip with the projection. It is the same whole-window
   projection the Plan tab's caption uses, computed against the window length
   the adapter reports — never a length inferred from the display label, which
   mislabels any provider that picks its label from the distance to the reset.
