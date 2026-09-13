@@ -61,16 +61,21 @@ enum CodexResetForecastPresentation {
             : L("last global reset")
         // Two whole sentences rather than one with a `yes`/`no` hole in it: a
         // translator needs the sentence, and "yes" on its own is not one.
-        let template = reading.workingHoursSF
-            ? "Reset forecast: %@ chance in the next 24h %@, %@ in 6h %@. %@ since the %@; typical wait %@. Working hours in SF: yes."
-            : "Reset forecast: %@ chance in the next 24h %@, %@ in 6h %@. %@ since the %@; typical wait %@. Working hours in SF: no."
-        let headline = L(
-            template,
-            percent(reading.within24h.point), range(reading.within24h),
-            percent(reading.within6h.point), range(reading.within6h),
-            duration(hours: reading.hoursSinceLastReset), since,
-            duration(hours: reading.typicalWaitHours)
-        )
+        //
+        // Each variant is written out as the literal first argument of its own
+        // `L(...)` call, never picked into a variable first. The localization
+        // scanner reads source rather than running it, so a key chosen through a
+        // `let` or a ternary over strings is invisible to it, and both catalog
+        // entries would be reported as dead weight.
+        let within24 = percent(reading.within24h.point)
+        let range24 = range(reading.within24h)
+        let within6 = percent(reading.within6h.point)
+        let range6 = range(reading.within6h)
+        let elapsed = duration(hours: reading.hoursSinceLastReset)
+        let typical = duration(hours: reading.typicalWaitHours)
+        let headline = reading.workingHoursSF
+            ? L("Reset forecast: %@ chance in the next 24h %@, %@ in 6h %@. %@ since the %@; typical wait %@. Working hours in SF: yes.", within24, range24, within6, range6, elapsed, since, typical)
+            : L("Reset forecast: %@ chance in the next 24h %@, %@ in 6h %@. %@ since the %@; typical wait %@. Working hours in SF: no.", within24, range24, within6, range6, elapsed, since, typical)
 
         var caveats = [L("Estimated from %lld past resets in the public record", reading.resetCount)]
         if reading.beyondRecord { caveats.append(L("the wait is already longer than any in that record")) }
