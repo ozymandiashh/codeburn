@@ -389,6 +389,10 @@ enum EarlyQuotaResetFormat {
     /// baseline, so the next fetch is silent; it can never turn into a false
     /// announcement, because a key with no stored reading has nothing to
     /// compare against.
+    ///
+    /// Callers must pass a label with something in it; a blank one has no
+    /// identity to store under and no name to say out loud, and is skipped
+    /// before it reaches here.
     static func windowKey(forLabel label: String) -> String {
         var slug = ""
         var pendingSeparator = false
@@ -408,11 +412,16 @@ enum EarlyQuotaResetFormat {
     /// already says what it caps ("Monthly usage limit") keeps its own noun; one
     /// that names only a period ("Weekly", "5-hour") gains "limit" so the
     /// notification reads as a sentence.
+    ///
+    /// English, like `claudeWindowName(forKey:)`, because this is the name that
+    /// is persisted with the event: `limitName`, `usageName` and `windowNoun`
+    /// translate it at render. "Weekly" and "5-hour" compose into names those
+    /// three already know, so the common rows translate in full.
     static func windowName(forLabel label: String) -> String {
         let trimmed = label
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        guard !trimmed.isEmpty else { return "quota window" }
+        guard !trimmed.isEmpty else { return trimmed }
         let ownNouns = ["limit", "usage", "quota", "credits", "window"]
         return ownNouns.contains(where: trimmed.hasSuffix) ? trimmed : "\(trimmed) limit"
     }
@@ -441,8 +450,10 @@ enum EarlyQuotaResetFormat {
     /// stays the English name `claudeWindowName(forKey:)` produced and the
     /// translation happens here, at render. Keyed on that English name rather
     /// than by stripping `" limit"` off the end, which is a rule only English
-    /// obeys. A label outside the known set — a provider wired up later —
-    /// keeps the old suffix behaviour and reads through untranslated.
+    /// obeys. A label outside the known set — a provider's own, composed by
+    /// `windowName(forLabel:)` — keeps the suffix behaviour: the provider's noun
+    /// reads through untranslated and only the word this file added to it is
+    /// routed, the same shape `usageName` already used for its default.
 
     /// "weekly limit" -> "weekly limit": the cap itself.
     static func limitName(_ name: String) -> String {
@@ -451,7 +462,12 @@ enum EarlyQuotaResetFormat {
         case "weekly limit": L("weekly limit")
         case "Opus weekly limit": L("Opus weekly limit")
         case "Sonnet weekly limit": L("Sonnet weekly limit")
-        default: name
+        // A name built from a provider's own label, which `windowName(forLabel:)`
+        // composes in English. The noun is the provider's and reads through; the
+        // word this file added to it is ours, so it is routed.
+        default: name.hasSuffix(" limit")
+            ? L("%@ limit", String(name.dropLast(" limit".count)))
+            : name
         }
     }
 

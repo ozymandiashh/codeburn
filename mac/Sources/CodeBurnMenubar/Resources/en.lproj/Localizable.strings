@@ -682,6 +682,7 @@
 "Last %lld %@ resets came ~%@ early" = "Last %lld %@ resets came ~%@ early";
 "%lld of the last %lld %@ resets came ~%@ early" = "%lld of the last %lld %@ resets came ~%@ early";
 "%lldh" = "%lldh";
+"%@ limit" = "%@ limit";
 "5-hour limit" = "5-hour limit";
 "weekly limit" = "weekly limit";
 "Opus weekly limit" = "Opus weekly limit";

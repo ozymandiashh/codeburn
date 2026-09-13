@@ -3027,6 +3027,9 @@ final class AppStore {
         var observations: [EarlyQuotaResetMonitor.Observation] = []
         var seen: Set<String> = []
         for row in rows {
+            // A blank label is no identity to store under and no name to say out
+            // loud; two of them would also share one key.
+            guard !row.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
             let key = EarlyQuotaResetFormat.windowKey(forLabel: row.label)
             guard seen.insert(key).inserted else { continue }
             observations.append(EarlyQuotaResetMonitor.Observation(
