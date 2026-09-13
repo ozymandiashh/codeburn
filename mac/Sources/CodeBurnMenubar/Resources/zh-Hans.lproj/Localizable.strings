@@ -646,6 +646,7 @@
 "This window's limit is fully used. It resets in %@." = "该窗口的限额已全部用完，将在 %@后重置。";
 "On pace" = "符合节奏";
 "Lasts until reset" = "可支撑到重置";
+"Lasts until reset · ~%lld%% unused" = "可支撑到重置 · 约 %lld%% 用不完";
 "Won't last until reset" = "撑不到重置";
 "Runs out in %@" = "%@后耗尽";
 "Estimated from the average pace across this whole %@ window so far — not a measured recent rate." = "根据整个 %@窗口至今的平均速度估算，而非最近实测的速率。";
@@ -653,6 +654,7 @@
 "Projected %lld%% used by the reset — on pace." = "预计到重置时将用掉 %lld%% — 符合节奏。";
 "Projected %d%% used by the reset, %.0f%% ahead of the pace the elapsed window implies." = "预计到重置时将用掉 %d%%，比已过窗口所对应的节奏超出 %.0f%%。";
 "Projected %d%% used by the reset, %.0f%% of the window still in reserve." = "预计到重置时将用掉 %d%%，该窗口还有 %.0f%% 的结余。";
+"At this pace about %lld%% of the window goes unused by the reset." = "按此速度，到重置时该窗口约有 %lld%% 用不完。";
 "5-hour" = "5 小时";
 "7-day" = "7 天";
 "%lld-day" = "%lld 天";

@@ -654,6 +654,7 @@
 "This window's limit is fully used. It resets in %@." = "This window's limit is fully used. It resets in %@.";
 "On pace" = "On pace";
 "Lasts until reset" = "Lasts until reset";
+"Lasts until reset · ~%lld%% unused" = "Lasts until reset · ~%lld%% unused";
 "Won't last until reset" = "Won't last until reset";
 "Runs out in %@" = "Runs out in %@";
 "Estimated from the average pace across this whole %@ window so far — not a measured recent rate." = "Estimated from the average pace across this whole %@ window so far — not a measured recent rate.";
@@ -661,6 +662,7 @@
 "Projected %lld%% used by the reset — on pace." = "Projected %lld%% used by the reset — on pace.";
 "Projected %d%% used by the reset, %.0f%% ahead of the pace the elapsed window implies." = "Projected %d%% used by the reset, %.0f%% ahead of the pace the elapsed window implies.";
 "Projected %d%% used by the reset, %.0f%% of the window still in reserve." = "Projected %d%% used by the reset, %.0f%% of the window still in reserve.";
+"At this pace about %lld%% of the window goes unused by the reset." = "At this pace about %lld%% of the window goes unused by the reset.";
 "5-hour" = "5-hour";
 "7-day" = "7-day";
 "%lld-day" = "%lld-day";

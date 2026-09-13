@@ -88,9 +88,89 @@ struct CapacityDockPacePresentationTests {
     @Test("Behind pace stays in reserve with a projection, no alarm")
     func reserveStaysNeutral() {
         let line = f.line(percent: 0.2, elapsedFraction: 0.5, windowSeconds: f.week)
-        #expect(line?.text == "Lasts until reset")
+        #expect(line?.text == "Lasts until reset · ~60% unused")
         #expect(line?.helpText.contains("30% of the window still in reserve") == true)
         #expect(line?.tone == .neutral)
+    }
+
+    @Test("A long window that lasts names the share this pace leaves unused")
+    func unusedShareOnLongWindow() {
+        // The maintainer's example: 5% used 15 hours into a 7-day window
+        // projects to 56% at the reset, so about 44% of it goes unused.
+        let resetsAt = f.now.addingTimeInterval(TimeInterval(f.week - 15 * 3600))
+        let window = f.window("Weekly", 0.05, resetsAt: resetsAt, windowSeconds: f.week)
+        let line = QuotaPacePresentation.line(for: window, connection: .connected, now: f.now)
+        #expect(line?.kind == .estimate)
+        #expect(line?.text == "Lasts until reset · ~44% unused")
+        #expect(line?.tone == .neutral)
+        // The verdict stays the lead, and the caption never promises.
+        #expect(line?.text.hasPrefix("Lasts until reset") == true)
+        #expect(!(line?.text.lowercased().contains("will") ?? true))
+        // The tooltip carries the projection and the "at this pace" qualifier.
+        #expect(line?.helpText.contains("Projected 56% used by the reset") == true)
+        #expect(line?.helpText.contains("At this pace about 44% of the window goes unused by the reset.") == true)
+    }
+
+    @Test("A leftover under ten points keeps the plain verdict")
+    func unusedShareBelowThreshold() {
+        // 45.5% at half a week projects to 91%: 9 points unused, outside the
+        // on-pace band (4.5 behind), so only the threshold keeps it quiet.
+        let line = f.line(percent: 0.455, elapsedFraction: 0.5, windowSeconds: f.week)
+        #expect(line?.text == "Lasts until reset")
+        #expect(line?.helpText.contains("goes unused") == false)
+    }
+
+    @Test("Exactly ten points unused is enough to name it")
+    func unusedShareAtThreshold() {
+        #expect(QuotaPacePresentation.minimumUnusedSharePercent == 10)
+        // 45% at half a week projects to 90%: exactly 10 points unused.
+        let line = f.line(percent: 0.45, elapsedFraction: 0.5, windowSeconds: f.week)
+        #expect(line?.text == "Lasts until reset · ~10% unused")
+    }
+
+    @Test("The share is rounded to a whole percent, and the threshold reads the rounded figure")
+    func unusedShareRounding() {
+        // 44.4% projected leaves 55.6%: rounds to 56, never truncates to 55.
+        #expect(f.line(percent: 0.222, elapsedFraction: 0.5, windowSeconds: f.week)?.text == "Lasts until reset · ~56% unused")
+        // 90.4% projected leaves 9.6%: rounds to 10, which clears the threshold,
+        // so the caption never hides a share it would print as "10%".
+        #expect(f.line(percent: 0.452, elapsedFraction: 0.5, windowSeconds: f.week)?.text == "Lasts until reset · ~10% unused")
+    }
+
+    @Test("Inside the on-pace band a long window names no share, however early")
+    func unusedShareRespectsOnPaceBand() {
+        // 8.5% used a tenth of the way in is 1.5 points behind: on pace. The
+        // straight line would call that 15% unused, which is the delta divided
+        // by a small elapsed fraction, not a margin worth printing.
+        let line = f.line(percent: 0.085, elapsedFraction: 0.1, windowSeconds: f.week)
+        #expect(line?.text == "Lasts until reset")
+        #expect(line?.helpText.contains("on pace") == true)
+        #expect(line?.helpText.contains("goes unused") == false)
+    }
+
+    @Test("A barely used window younger than 3% still gets nothing")
+    func unusedShareEarlyWindowIsSilent() {
+        // Almost nothing used 2% of the way in would read as ~100% unused;
+        // the early-window silence wins before any share is computed.
+        #expect(f.line(percent: 0.001, elapsedFraction: 0.02, windowSeconds: f.week) == nil)
+        #expect(f.line(percent: 0.001, elapsedFraction: 0.03, windowSeconds: f.week)?.text.hasSuffix("unused") == true)
+    }
+
+    @Test("Short windows keep their reserve stage and never name an unused share")
+    func shortWindowNamesNoUnusedShare() {
+        let short = f.line(percent: 0.2, elapsedFraction: 0.5, windowSeconds: f.fiveHours)
+        #expect(short?.text == "30% in reserve")
+        #expect(short?.helpText.contains("goes unused") == false)
+        let sixHours = 6 * 3600
+        #expect(f.line(percent: 0.2, elapsedFraction: 0.5, windowSeconds: sixHours)?.text == "30% in reserve")
+        #expect(f.line(percent: 0.2, elapsedFraction: 0.5, windowSeconds: sixHours + 1)?.text == "Lasts until reset · ~60% unused")
+    }
+
+    @Test("An overflowing long window names no unused share")
+    func overflowNamesNoUnusedShare() {
+        let line = f.line(percent: 0.6, elapsedFraction: 0.4, windowSeconds: f.week)
+        #expect(line?.text == "Runs out in 1d 20h")
+        #expect(line?.helpText.contains("unused") == false)
     }
 
     @Test("A window younger than 3% elapsed gets no estimate")
@@ -101,7 +181,7 @@ struct CapacityDockPacePresentationTests {
     @Test("No usage yet reads as a zero projection, not as zero-signal")
     func noUsageYet() {
         let line = f.line(percent: 0.0, elapsedFraction: 0.5, windowSeconds: f.week)
-        #expect(line?.text == "Lasts until reset")
+        #expect(line?.text == "Lasts until reset · ~100% unused")
         #expect(line?.helpText.contains("Projected 0% used by the reset") == true)
         #expect(line?.tone == .neutral)
     }
@@ -236,6 +316,7 @@ struct CapacityDockPacePresentationTests {
         )
         let line = QuotaPacePresentation.line(for: window, connection: .connected, now: f.now)
         #expect(line?.kind == .estimate)
+        // 4% would go unused: under the threshold, so the plain verdict.
         #expect(line?.text == "Lasts until reset")
         #expect(line?.helpText.contains("Projected 96% used by the reset") == true)
     }
@@ -250,9 +331,10 @@ struct CapacityDockPacePresentationTests {
         let resetsAt = f.now.addingTimeInterval(6 * 24 * 3600)   // inside the band
         let window = f.window("Weekly", 0.72, resetsAt: resetsAt, windowSeconds: month)
 
-        // 24 of 30 days elapsed at 72% used projects to 90%: it lasts.
+        // 24 of 30 days elapsed at 72% used projects to 90%: it lasts, with
+        // 10% of the month left over.
         let line = QuotaPacePresentation.line(for: window, connection: .connected, now: f.now)
-        #expect(line?.text == "Lasts until reset")
+        #expect(line?.text == "Lasts until reset · ~10% unused")
         #expect(line?.tone == .neutral)
         #expect(line?.helpText.contains("30-day window") == true)
 

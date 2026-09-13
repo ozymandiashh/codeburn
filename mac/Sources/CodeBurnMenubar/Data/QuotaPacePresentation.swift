@@ -31,6 +31,20 @@ enum QuotaPacePresentation {
     static let claudeFiveHourSeconds = 5 * 3600
     static let claudeSevenDaySeconds = 7 * 24 * 3600
 
+    /// Smallest share of a long window, in whole percent, the caption names as
+    /// unused at the current pace.
+    ///
+    /// The share is `100 − projected`, and `projected` is a straight-line
+    /// extrapolation of one whole-window average. At the precision a linear
+    /// model has, a projection of 96% and one of 100% are the same forecast: a
+    /// few heavy or quiet hours move the average by more than that, so "~4%
+    /// unused" would promise a margin the model cannot see, and it would
+    /// flicker in and out of the caption as the average drifts. Ten points is
+    /// the smallest leftover that clears that noise and is still worth acting
+    /// on (about 17 hours of a seven-day window). Below it the caption stays
+    /// the plain verdict, and the projected figure stays in `helpText`.
+    static let minimumUnusedSharePercent = 10
+
     /// What a window column draws in its reserved pace slot. The slot itself
     /// stays empty when no `Line` is defensible.
     struct Line: Equatable {
@@ -151,12 +165,45 @@ enum QuotaPacePresentation {
         }
     }
 
+    /// The share of a long window this pace leaves unused at the reset, in
+    /// whole percent, or nil when the caption must not name one.
+    ///
+    /// Nil on every window that is not the under-limit long-window case: a
+    /// short window prints its deficit/reserve stage instead (#726), and an
+    /// overflowing window leaves nothing unused to talk about. Nil inside the
+    /// same two-point on-pace band the stage and the help text use: the
+    /// leftover is the delta divided by the elapsed fraction, so early in a
+    /// week a one-point gap would otherwise read as a double-digit share while
+    /// the tooltip calls the same window on pace. Nil too below
+    /// `minimumUnusedSharePercent`, applied to the *rounded* figure so the
+    /// caption can never print a number the threshold says is too small.
+    ///
+    /// This is the complement of the projection `helpText` already carries,
+    /// and of the Plan tab's "%@ at reset" wherever that caption runs the same
+    /// `QuotaPace` math: 44% unused is 56% projected, one subtraction apart,
+    /// never a second independent estimate.
+    static func unusedSharePercent(for result: QuotaPace.Result, windowSeconds: Int) -> Int? {
+        guard TimeInterval(windowSeconds) > QuotaPace.etaSuppressionMaxSeconds else { return nil }
+        guard !result.willOverflow else { return nil }
+        guard abs(result.deltaPercent) > 2 else { return nil }
+        let unused = Int((100 - result.projectedPercent).rounded())
+        guard unused >= minimumUnusedSharePercent else { return nil }
+        return unused
+    }
+
     /// Compact caption, phrased as the plain "am I going to make it?" answer
     /// #1287 argued for rather than as a projection the reader has to decode:
     /// a window that lands at or under the limit reads "Lasts until reset",
-    /// one that does not reads "Runs out in <now-to-limit>". The projected
-    /// percentage it came from stays in `helpText`, where there is room for
-    /// the reasoning. On windows at or under
+    /// one that does not reads "Runs out in <now-to-limit>". A long window that
+    /// lasts with a material share to spare also says how much of the paid
+    /// window that pace leaves on the table — "Lasts until reset · ~44%
+    /// unused" — because "it lasts" alone hides the difference between
+    /// finishing the week at 98% and finishing it at 56%. The verdict stays the
+    /// lead, the share is an aside, and the "at this pace" the share is only
+    /// true under stays in `helpText`, which is where the caption's 12pt slot
+    /// ends (the two-column dock cell is 155pt wide, and the whole sentence
+    /// does not fit at any scale the slot allows). The projected percentage it
+    /// came from stays there too. On windows at or under
     /// `QuotaPace.etaSuppressionMaxSeconds` there is no defensible ETA at all
     /// — a linear read of a short window cries wolf after one burst — so
     /// those keep the on-pace / deficit / reserve stage instead (#726).
@@ -171,7 +218,12 @@ enum QuotaPacePresentation {
             }
             return L("%@%% in reserve", String(Int(-result.deltaPercent.rounded())))
         }
-        guard result.willOverflow else { return L("Lasts until reset") }
+        guard result.willOverflow else {
+            guard let unused = unusedSharePercent(for: result, windowSeconds: windowSeconds) else {
+                return L("Lasts until reset")
+            }
+            return L("Lasts until reset · ~%lld%% unused", unused)
+        }
         // A long overflowing window always yields an ETA (a projection over
         // 100% implies a positive rate), but if that ever stopped holding,
         // saying it lasts would be the one wrong answer.
@@ -210,7 +262,16 @@ enum QuotaPacePresentation {
                 projected, -result.deltaPercent
             )
         }
-        return basis + " " + projectionSentence
+        var sentences = [basis, projectionSentence]
+        // Same gate as the caption, so the tooltip never explains a share the
+        // caption did not print, and never omits one it did.
+        if let unused = unusedSharePercent(for: result, windowSeconds: windowSeconds) {
+            sentences.append(L(
+                "At this pace about %lld%% of the window goes unused by the reset.",
+                unused
+            ))
+        }
+        return sentences.joined(separator: " ")
     }
 
     /// Human label for a validated duration: the two lengths Claude and Codex

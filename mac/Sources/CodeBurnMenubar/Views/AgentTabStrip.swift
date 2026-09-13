@@ -507,6 +507,11 @@ private struct QuotaDetailRow: View {
                     .font(.system(size: 9.5, weight: .medium))
                     .foregroundStyle(paceTint)
                     .lineLimit(1)
+                    // The indent leaves this caption 136pt, and the longest
+                    // one ("Lasts until reset · ~100% unused") sets at ~155pt.
+                    // Shrink it the way the dock's caption already does rather
+                    // than clip the share, which is the part that changed.
+                    .minimumScaleFactor(0.8)
                     .padding(.leading, Self.labelWidth + Self.rowSpacing)
                     .help(paceLine.helpText)
                     .accessibilityLabel(paceLine.text)
