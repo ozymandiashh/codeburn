@@ -701,7 +701,7 @@ private final class RecordingEarlyResetNotifier: UpdateNotifier {
 /// One provider's identity for the same weekly window, so the guards below run
 /// unchanged against Claude and Codex. Codex's window has no key of its own:
 /// like every provider but Claude it is identified by its display label.
-private struct EarlyResetProviderCase: Sendable, CustomStringConvertible {
+struct EarlyResetProviderCase: Sendable, CustomStringConvertible {
     let providerID: String
     let providerName: String
     let windowKey: String
@@ -1130,8 +1130,8 @@ struct EarlyQuotaResetWiringTests {
         #expect(band.providerID == "grok")
         #expect(band.noticeText == "Weekly limit reset 18h early")
         // Claude's band and captions are untouched by another provider's reset.
-        #expect(store.capacityDockEarlyResetNotice(for: .claude) == nil)
-        #expect(store.earlyResetHistoryCaptions(for: .claude).isEmpty)
+        #expect(store.capacityDockEarlyResetNotice(for: CapacityDockProvider.claude) == nil)
+        #expect(store.earlyResetHistoryCaptions(for: CapacityDockProvider.claude).isEmpty)
     }
 
     /// `QuotaSummary.Window` carries no duration for these adapters today, and a
@@ -1172,7 +1172,7 @@ struct EarlyQuotaResetWiringTests {
         #expect(store.capacityDockEarlyResetNotice(for: provider) == nil)
     }
 
-    private static func summary(
+    nonisolated private static func summary(
         percent: Double,
         resetsIn: TimeInterval,
         windowSeconds: Int? = 7 * 24 * 3600
