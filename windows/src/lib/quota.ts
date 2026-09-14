@@ -15,6 +15,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 
 import { subscribeSettings } from './appSettings'
+import { L, Lf } from './i18n'
 
 export type Severity = 'normal' | 'warning' | 'critical' | 'danger'
 
@@ -43,17 +44,19 @@ export function pct(value: number): number {
   return Math.min(100, Math.max(0, Math.round(value)))
 }
 
+/// The reset countdown, in the glossary's own countdown keys so the tray and
+/// the mac spell "2d 3h" the same way.
 export function resetsIn(iso: string | undefined, now = Date.now()): string {
   if (!iso) return ''
   const seconds = (new Date(iso).getTime() - now) / 1000
   if (Number.isNaN(seconds)) return ''
-  if (seconds < 60) return 'now'
+  if (seconds < 60) return L('now')
   const minutes = Math.floor(seconds / 60)
   const hours = Math.floor(minutes / 60)
   const days = Math.floor(hours / 24)
-  if (days > 0) return `${days}d ${hours % 24}h`
-  if (hours > 0) return `${hours}h ${minutes % 60}m`
-  return `${minutes}m`
+  if (days > 0) return Lf('%lldd %lldh', days, hours % 24)
+  if (hours > 0) return Lf('%lldh %lldm', hours, minutes % 60)
+  return Lf('%lldm', minutes)
 }
 
 /// The providers whose quota adapter takes a key from the environment, from `src/quota/*.ts`.
@@ -311,7 +314,7 @@ export function summaryFor(quota: QuotaState, id: string): QuotaSummary | null {
     (acc, row) => (acc && acc.usedPct >= row.usedPct ? acc : row),
     null,
   )
-  const footerLines = quota.retrying && quota.error ? [`Refresh failed: ${quota.error}`] : []
+  const footerLines = quota.retrying && quota.error ? [Lf('Refresh failed: %@', quota.error)] : []
   return {
     id: provider.id,
     name: provider.name,

@@ -1,22 +1,28 @@
-export type InsightMode = 'plan' | 'trend' | 'forecast' | 'calendar' | 'pulse' | 'stats' | 'optimize'
+import { L } from '../lib/i18n'
 
-export const INSIGHT_LABELS: Record<InsightMode, string> = {
-  plan: 'Plan',
-  trend: 'Trend',
-  forecast: 'Forecast',
-  calendar: 'Calendar',
-  pulse: 'Pulse',
-  stats: 'Stats',
-  optimize: 'Optimize',
-}
+export type InsightMode = 'plan' | 'trend' | 'forecast' | 'calendar' | 'pulse' | 'stats' | 'optimize'
 
 /// Same order as the macOS InsightMode enum: Plan first when it is visible.
 export const INSIGHT_ORDER: InsightMode[] = [
   'plan', 'trend', 'forecast', 'calendar', 'pulse', 'stats', 'optimize',
 ]
 
+/// The glossary's own tab names, resolved at call time so they follow the UI
+/// language (the module loads before the language is resolved).
+export function insightLabel(mode: InsightMode): string {
+  switch (mode) {
+    case 'plan': return L('Plan')
+    case 'trend': return L('Trend')
+    case 'forecast': return L('Forecast')
+    case 'calendar': return L('Calendar')
+    case 'pulse': return L('Pulse')
+    case 'stats': return L('Stats')
+    case 'optimize': return L('Optimize')
+  }
+}
+
 export function isInsightMode(value: string | null): value is InsightMode {
-  return value !== null && value in INSIGHT_LABELS
+  return value !== null && INSIGHT_ORDER.includes(value as InsightMode)
 }
 
 type Props = {
@@ -27,7 +33,7 @@ type Props = {
 
 export function InsightPills({ selected, onSelect, modes }: Props) {
   return (
-    <div className="insight-pills" role="tablist" aria-label="Insight">
+    <div className="insight-pills" role="tablist" aria-label={L('Insight')}>
       {modes.map(m => (
         <button
           key={m}
@@ -39,7 +45,7 @@ export function InsightPills({ selected, onSelect, modes }: Props) {
           className={`insight-pill ${selected === m ? 'insight-pill-active' : ''}`}
           onClick={() => onSelect(m)}
         >
-          {INSIGHT_LABELS[m]}
+          {insightLabel(m)}
         </button>
       ))}
     </div>

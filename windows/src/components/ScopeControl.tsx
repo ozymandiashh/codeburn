@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { ClaudeConfigOption } from '../lib/payload'
+import { L } from '../lib/i18n'
 import { CheckIcon, ChevronDown, PersonCircleIcon } from './Icons'
 
 /// Port of ScopeSegmentedControl in mac/.../Views/MenuBarContent.swift. Local is this
@@ -8,9 +9,10 @@ import { CheckIcon, ChevronDown, PersonCircleIcon } from './Icons'
 
 export type Scope = 'local' | 'combined'
 
-const SCOPES: Array<{ id: Scope; label: string }> = [
-  { id: 'local', label: 'Local' },
-  { id: 'combined', label: 'Combined' },
+/// The two scope labels, resolved at render so they follow the UI language.
+const SCOPES: Array<{ id: Scope; label: () => string }> = [
+  { id: 'local', label: () => L('Local') },
+  { id: 'combined', label: () => L('Combined') },
 ]
 
 type Props = {
@@ -40,7 +42,7 @@ export function ScopeControl({ scope, onScope, configs, selectedConfigId, onConf
 
   return (
     <div className="scope-wrap">
-      <nav className="scope-tabs" role="radiogroup" aria-label="Scope" ref={radios} onKeyDown={onKeyDown}>
+      <nav className="scope-tabs" role="radiogroup" aria-label={L('Scope')} ref={radios} onKeyDown={onKeyDown}>
         {SCOPES.map((s, i) => (
           <button
             key={s.id}
@@ -51,7 +53,7 @@ export function ScopeControl({ scope, onScope, configs, selectedConfigId, onConf
             tabIndex={i === activeIndex ? 0 : -1}
             onClick={() => onScope(s.id)}
           >
-            {s.label}
+            {s.label()}
           </button>
         ))}
       </nav>
@@ -69,7 +71,7 @@ function ConfigPicker({ configs, selectedId, onSelect }: {
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-  const label = configs.find(c => c.id === selectedId)?.label ?? 'All'
+  const label = configs.find(c => c.id === selectedId)?.label ?? L('All')
 
   useEffect(() => {
     if (!open) return
@@ -87,7 +89,7 @@ function ConfigPicker({ configs, selectedId, onSelect }: {
       <button
         type="button"
         className="config-button"
-        title="Claude config"
+        title={L('Claude config')}
         aria-expanded={open}
         onClick={() => setOpen(o => !o)}
       >
@@ -99,7 +101,7 @@ function ConfigPicker({ configs, selectedId, onSelect }: {
         <div className="config-menu" role="menu">
           <button type="button" className="config-item" role="menuitem" onClick={() => choose(null)}>
             <span className="config-check">{selectedId === null && <CheckIcon size={9} />}</span>
-            All
+            {L('All')}
           </button>
           <div className="config-sep" />
           {configs.map(option => (

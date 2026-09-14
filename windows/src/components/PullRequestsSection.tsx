@@ -1,6 +1,7 @@
 import type { MenubarPayload } from '../lib/payload'
 import type { CurrencyState } from '../lib/currency'
 import { formatCurrency } from '../lib/currency'
+import { L } from '../lib/i18n'
 import { SectionCaption } from './CollapsibleSection'
 
 /// Port of PullRequestsSection in mac/.../Views/PullRequestsSection.swift: the three pull
@@ -13,7 +14,7 @@ export function PullRequestsSection({ payload, currency }: { payload: MenubarPay
 
   return (
     <section className="pr-section">
-      <SectionCaption text="Pull requests" />
+      <SectionCaption text={L('Pull requests')} />
       {rows.map(row => (
         <div key={row.url} className="pr-row">
           <span className="pr-label">{row.label}</span>

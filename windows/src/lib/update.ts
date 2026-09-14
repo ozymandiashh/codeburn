@@ -13,6 +13,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { L, Lf } from './i18n'
 
 /// UpdateFailureStage, down to the one stage that still runs: the check.
 export type UpdateStage = 'check'
@@ -150,10 +151,10 @@ export function subscribeUpdate(listener: Listener): () => void {
 /// install the app no longer performs.
 export function badgeLabel(state: UpdateState): string {
   const status = state.status
-  if (status?.failureStage === 'check') return 'Update Check Failed'
-  if (status?.updateAvailable) return 'Download from GitHub'
-  if (status?.cliUpdateAvailable) return 'CLI Update Available'
-  return 'Update'
+  if (status?.failureStage === 'check') return L('Update Check Failed')
+  if (status?.updateAvailable) return L('Download from GitHub')
+  if (status?.cliUpdateAvailable) return L('CLI Update Available')
+  return L('Update')
 }
 
 /// UpdateChecker.updateHelpText: the whole story in the tooltip, since the pill has room for
@@ -162,23 +163,26 @@ export function helpText(state: UpdateState): string {
   const status = state.status
   if (status?.failureStage === 'check' && status.error) {
     return [
-      'CodeBurn could not check GitHub for updates.',
+      L('CodeBurn could not check GitHub for updates.'),
       status.error,
-      'Click to retry the update check.',
+      L('Click to retry the update check.'),
     ].join('\n\n')
   }
   if (status?.updateAvailable) {
-    const version = status.latestVersion ? `Version ${status.latestVersion}` : 'A newer version'
+    const version = status.latestVersion ? Lf('Version %@', status.latestVersion) : L('A newer version')
     return [
-      `${version} is on GitHub. Click to open the release page.`,
-      `These builds do not update themselves. Download the installer there, or run ${status.appUpdateCommand} in a terminal.`,
+      Lf('%@ is on GitHub. Click to open the release page.', version),
+      Lf(
+        'These builds do not update themselves. Download the installer there, or run %@ in a terminal.',
+        status.appUpdateCommand,
+      ),
     ].join('\n\n')
   }
   if (status?.cliUpdateAvailable) {
-    const version = status.latestCliVersion ?? 'A newer CLI'
-    return `CLI ${version} is available. Run ${status.cliUpdateCommand} in a terminal.`
+    const version = status.latestCliVersion ?? L('A newer CLI')
+    return Lf('CLI %@ is available. Run %@ in a terminal.', version, status.cliUpdateCommand)
   }
-  return 'Check GitHub for a newer release'
+  return L('Check GitHub for a newer release')
 }
 
 /// What a click on the badge does: an offered app update opens its release page, and

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ACCENT_PRESETS, type AccentPreset } from '../lib/accent'
+import { L } from '../lib/i18n'
 import { QuotaWarningRow } from './QuotaWarningRow'
 import { UpdateBadge } from './UpdateBadge'
 import type { QuotaState } from '../lib/quota'
@@ -22,7 +23,7 @@ export function Header({ quota, showQuota, accent, onAccent, animate }: Props) {
       <div className="header-top">
         <div className="header-brand">
           <FlameWordmark animate={animate} />
-          <div className="subhead">Your AI Bill, Itemized</div>
+          <div className="subhead">{L('Your AI Bill, Itemized')}</div>
         </div>
         <div className="header-actions">
           <UpdateBadge />
@@ -57,7 +58,7 @@ function AccentPicker({ accent, onAccent }: { accent: AccentPreset; onAccent: (p
               type="button"
               className={`accent-swatch ${preset.id === accent.id ? 'is-selected' : ''}`}
               style={{ background: preset.base }}
-              aria-label={preset.label}
+              aria-label={preset.label()}
               aria-pressed={preset.id === accent.id}
               onClick={() => onAccent(preset)}
             />
@@ -68,7 +69,7 @@ function AccentPicker({ accent, onAccent }: { accent: AccentPreset; onAccent: (p
         type="button"
         className="accent-current"
         style={{ background: accent.base }}
-        aria-label="Change accent color"
+        aria-label={L('Change accent color')}
         aria-expanded={open}
         onClick={() => setOpen(o => !o)}
       />

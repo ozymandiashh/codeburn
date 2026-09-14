@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event'
 
 import type { MenubarPayload } from './lib/payload'
 import type { CurrencyState } from './lib/currency'
-import { USD, formatCurrency, formatTokens, plural, trayBadgeText } from './lib/currency'
+import { USD, formatCurrency, formatTokens, trayBadgeText } from './lib/currency'
 import { PayloadCache, sameSelection, selectionKey, type Selection } from './lib/cache'
 import { relativePast } from './lib/dates'
 import { applyTheme, readSetting, writeSetting } from './lib/settings'
@@ -13,6 +13,7 @@ import {
   writeSettings, type AppSettings, type ThemeChoice,
 } from './lib/appSettings'
 import { TRAY_BADGE_SUPPORTED } from './lib/platform'
+import { L, Lcount, Lf } from './lib/i18n'
 import { usageRefreshPlan } from './lib/refresh'
 import { EMPTY_QUOTA, refreshQuota, refreshQuotaIfDue, subscribeQuota, worstSeverity, type QuotaState } from './lib/quota'
 import { AgentTabStrip, ALL_PROVIDER, providerLabel, providerTabs } from './components/AgentTabStrip'
@@ -37,7 +38,7 @@ import { SetupState, type CliStatus } from './components/SetupState'
 import { StarBanner } from './components/StarBanner'
 import { TelemetryNotice } from './components/TelemetryNotice'
 import { HeroSection } from './components/HeroSection'
-import { PeriodTabs, PERIOD_LABELS, daySelectionLabel } from './components/PeriodTabs'
+import { PeriodTabs, periodLabel, daySelectionLabel } from './components/PeriodTabs'
 import { ScopeControl, type Scope } from './components/ScopeControl'
 import type { DaySelection, Period } from './components/PeriodTabs'
 import { FooterBar } from './components/FooterBar'
@@ -382,7 +383,7 @@ export function App() {
       if (payloadCache.flightAge(key) > FLIGHT_WATCHDOG_MS) payloadCache.clearInFlight(key)
       fetchKey(key, { includeOptimize: false, showOverlay: true })
       if (attempt >= RECOVERY_ATTEMPTS) {
-        setError(`Could not load ${label}. Check that the codeburn CLI is installed and working.`)
+        setError(Lf('Could not load %@. Check that the codeburn CLI is installed and working.', label))
         return
       }
       delay = Math.min(delay * 2, RECOVERY_MAX_MS)
@@ -435,7 +436,7 @@ export function App() {
   useEffect(() => {
     if (trayFigure === null) return
     const devices = trayShortfall
-      ? ` · ${trayShortfall.reachable} of ${trayShortfall.total} devices reporting`
+      ? ` · ${Lf('%lld of %lld devices reporting', trayShortfall.reachable, trayShortfall.total)}`
       : ''
     invoke('set_tray_tooltip', { text: `CodeBurn · ${trayFigure}${traySuffix}${devices}` }).catch(() => {})
     // Only the counts matter here, not the object identity a render makes fresh every time.
@@ -453,7 +454,7 @@ export function App() {
       : isTokenMetric
         ? (trayTokens === null ? null : formatTokens(trayTokens))
         : (trayCost === null ? null : trayBadgeText(trayCost, currency))
-    invoke('set_tray_badge', { text, muted: trayShortfall !== null }).catch(err => setError(`Tray badge: ${String(err)}`))
+    invoke('set_tray_badge', { text, muted: trayShortfall !== null }).catch(err => setError(Lf('Tray badge: %@', String(err))))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trayCost, trayTokens, currency, trayBadge, settings.metric, isTokenMetric, trayShortfall?.reachable, trayShortfall?.total])
 
@@ -469,11 +470,13 @@ export function App() {
   }, [quota, todayCost, todayTokens, budgets])
 
   useEffect(() => {
-    const span = MENUBAR_PERIODS.find(p => p.id === settings.menubarPeriod)?.label ?? 'Today'
-    const devices = trayShortfall ? ` · ${trayShortfall.reachable}/${trayShortfall.total} devices` : ''
+    const span = MENUBAR_PERIODS.find(p => p.id === settings.menubarPeriod)?.label() ?? L('Today')
+    const devices = trayShortfall
+      ? ` · ${Lf('%lld of %lld devices', trayShortfall.reachable, trayShortfall.total)}`
+      : ''
     const text = trayCurrent
-      ? `${span} · ${trayFigure} · ${plural(trayCurrent.calls, 'call')}${devices}`
-      : `${span} · no usage yet`
+      ? `${span} · ${trayFigure} · ${Lcount(trayCurrent.calls, '1 call', '%lld calls')}${devices}`
+      : Lf('%@ · no usage yet', span)
     invoke('set_tray_usage', { text }).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trayCurrent, trayFigure, settings.menubarPeriod, trayShortfall?.reachable, trayShortfall?.total])
@@ -582,7 +585,7 @@ export function App() {
     && (payload.current?.calls ?? 0) === 0 && (payload.current?.sessions ?? 0) === 0
     && (payload.history?.daily?.length ?? 0) === 0
 
-  const label = daySelectionLabel(days) ?? PERIOD_LABELS[period]
+  const label = daySelectionLabel(days) ?? periodLabel(period)
 
   const footnote = [version ? `CodeBurn v${version}` : 'CodeBurn', lastUpdated ? `updated ${relativePast(lastUpdated)}` : null]
     .filter(Boolean)

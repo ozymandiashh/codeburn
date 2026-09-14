@@ -1,4 +1,5 @@
 import { FLAME_PATH } from './Icons'
+import { Lf } from '../lib/i18n'
 
 /// The macOS BurnLoadingOverlay: a blurred sheet over the scroll area with a flame that
 /// fills bottom-to-top on a 1.4s loop while a soft glow pulses behind it.
@@ -10,7 +11,7 @@ export function LoadingOverlay({ periodLabel }: Props) {
     <div className="loading-overlay" role="status" aria-live="polite">
       <div className="loading-content">
         <BurnFlame />
-        <div className="loading-text">Loading {periodLabel}…</div>
+        <div className="loading-text">{Lf('Loading %@…', periodLabel)}</div>
       </div>
     </div>
   )

@@ -6,23 +6,24 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { L } from './i18n'
 
 export type DockTheme = 'graphite' | 'glass'
 export type DockGaugeShape = 'circle' | 'squircle'
 
-export const DOCK_THEMES: Array<{ id: DockTheme; label: string }> = [
-  { id: 'graphite', label: 'Graphite' },
+export const DOCK_THEMES: Array<{ id: DockTheme; label: () => string }> = [
+  { id: 'graphite', label: () => L('Graphite') },
   // The mac's second appearance is Liquid Glass. Windows cannot shape its acrylic material:
   // the DWM backdrop is drawn for the whole window rectangle and neither a window region nor
   // the corner preference clips it, and the dock's window is far bigger than the rail it
   // paints. So this is a translucent surface the page draws inside the rail's own outline,
   // which is what "glass" can mean for a shaped window here.
-  { id: 'glass', label: 'Glass' },
+  { id: 'glass', label: () => L('Glass') },
 ]
 
-export const DOCK_GAUGE_SHAPES: Array<{ id: DockGaugeShape; label: string }> = [
-  { id: 'circle', label: 'Circle' },
-  { id: 'squircle', label: 'Squircle' },
+export const DOCK_GAUGE_SHAPES: Array<{ id: DockGaugeShape; label: () => string }> = [
+  { id: 'circle', label: () => L('Circle') },
+  { id: 'squircle', label: () => L('Squircle') },
 ]
 
 /// CapacityDockPreferences.scaleRange and its 0.05 step.

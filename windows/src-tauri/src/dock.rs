@@ -1571,13 +1571,19 @@ pub fn popup_context_menu(app: &AppHandle) -> tauri::Result<()> {
     let Some(window) = app.get_webview_window(DOCK_LABEL) else {
         return Ok(());
     };
-    let refresh = MenuItem::with_id(app, "dock_refresh", "Refresh", true, None::<&str>)?;
-    let left = MenuItem::with_id(app, "dock_left", "Left", true, None::<&str>)?;
-    let right = MenuItem::with_id(app, "dock_right", "Right", true, None::<&str>)?;
-    let top = MenuItem::with_id(app, "dock_top", "Top", true, None::<&str>)?;
-    let bottom = MenuItem::with_id(app, "dock_bottom", "Bottom", true, None::<&str>)?;
-    let edges = Submenu::with_items(app, "Dock to Edge", true, &[&left, &right, &top, &bottom])?;
-    let hide = MenuItem::with_id(app, "dock_hide", "Hide Capacity Dock", true, None::<&str>)?;
+    let refresh = MenuItem::with_id(app, "dock_refresh", crate::i18n::l("Refresh"), true, None::<&str>)?;
+    let left = MenuItem::with_id(app, "dock_left", crate::i18n::l("Left"), true, None::<&str>)?;
+    let right = MenuItem::with_id(app, "dock_right", crate::i18n::l("Right"), true, None::<&str>)?;
+    let top = MenuItem::with_id(app, "dock_top", crate::i18n::l("Top"), true, None::<&str>)?;
+    let bottom = MenuItem::with_id(app, "dock_bottom", crate::i18n::l("Bottom"), true, None::<&str>)?;
+    let edges = Submenu::with_items(
+        app,
+        crate::i18n::l("Dock to Edge"),
+        true,
+        &[&left, &right, &top, &bottom],
+    )?;
+    let hide =
+        MenuItem::with_id(app, "dock_hide", crate::i18n::l("Hide Capacity Dock"), true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&refresh, &edges, &hide])?;
     menu.popup(window.as_ref().window())
 }

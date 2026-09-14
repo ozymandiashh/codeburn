@@ -902,7 +902,7 @@ pub fn open(app: &AppHandle, section: Option<&str>) -> tauri::Result<()> {
     // came up invisible every time but the first, and the builder centres it before the
     // first frame anyway, so there is nothing to hide from.
     let window = WebviewWindowBuilder::new(app, SETTINGS_LABEL, WebviewUrl::default())
-        .title("CodeBurn Settings")
+        .title(crate::i18n::l("CodeBurn Settings"))
         .inner_size(WINDOW_WIDTH, WINDOW_HEIGHT)
         .min_inner_size(MIN_WIDTH, MIN_HEIGHT)
         .resizable(true)

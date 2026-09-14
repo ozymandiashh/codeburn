@@ -5,6 +5,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { Group, Note, Pane, Row } from './controls'
 import { ArrowUpRight, FLAME_PATH } from '../components/Icons'
 import { relativePast } from '../lib/dates'
+import { L, Lf } from '../lib/i18n'
 import {
   EMPTY_UPDATE, checkUpdates, openReleasePage, subscribeUpdate, type UpdateState,
 } from '../lib/update'
@@ -15,11 +16,14 @@ import { track } from '../lib/telemetry'
 /// outside the Microsoft Store the build is unsigned, so the reader is sent to the release
 /// page and given the command that installs it. See src-tauri/src/update.rs.
 
-const LINKS = [
-  { title: 'GitHub', url: 'https://github.com/getagentseal/codeburn' },
-  { title: 'Website', url: 'https://codeburn.app' },
-  { title: 'Issues', url: 'https://github.com/getagentseal/codeburn/issues' },
-]
+/// The link rows, built per render so their labels follow the resolved UI language.
+function links(): Array<{ title: string; url: string }> {
+  return [
+    { title: L('GitHub'), url: 'https://github.com/getagentseal/codeburn' },
+    { title: L('Website'), url: 'https://codeburn.app' },
+    { title: L('Issues'), url: 'https://github.com/getagentseal/codeburn/issues' },
+  ]
+}
 
 type Props = {
   /// A deep link's anchor. The tray's "Check for Updates" lands here on `about#check`, and
@@ -60,13 +64,13 @@ export function AboutPane({ anchor }: Props) {
           </svg>
         </div>
         <div className="stg-hero-name">CodeBurn</div>
-        <div className="stg-hero-version">{version ? `Version ${version}` : 'Version'}</div>
-        <div className="stg-hero-tagline">Your AI Bill, Itemized</div>
+        <div className="stg-hero-version">{version ? Lf('Version %@', version) : L('Version')}</div>
+        <div className="stg-hero-tagline">{L('Your AI Bill, Itemized')}</div>
       </div>
 
-      <Group title="Updates">
+      <Group title={L('Updates')}>
         <Row
-          label={version ? `Version ${version}` : 'Version'}
+          label={version ? Lf('Version %@', version) : L('Version')}
           hint={lastChecked(update)}
           control={storeManaged ? null : (
             <>
@@ -76,7 +80,7 @@ export function AboutPane({ anchor }: Props) {
                   className="btn btn-prominent"
                   onClick={() => { track('update_click', { action: 'download' }); void openReleasePage(status) }}
                 >
-                  Download from GitHub
+                  {L('Download from GitHub')}
                 </button>
               )}
               <button
@@ -85,29 +89,29 @@ export function AboutPane({ anchor }: Props) {
                 disabled={update.checking}
                 onClick={() => { track('update_click', { action: 'check' }); void checkUpdates(true) }}
               >
-                {update.checking ? 'Checking...' : 'Check for Updates'}
+                {update.checking ? L('Checking…') : L('Check for Updates')}
               </button>
             </>
           )}
         />
         {appUpdate && status && (
           <CommandRow
-            label="Or install it from a terminal"
-            hint="Downloads the same release, checks it and runs the installer."
+            label={L('Or install it from a terminal')}
+            hint={L('Downloads the same release, checks it and runs the installer.')}
             command={status.appUpdateCommand}
           />
         )}
         {cliUpdate && status && (
-          <CommandRow label="Update the CLI" command={status.cliUpdateCommand} />
+          <CommandRow label={L('Update the CLI')} command={status.cliUpdateCommand} />
         )}
         <Note>{resultNote(update)}</Note>
       </Group>
 
       <Group
-        title="Links"
-        footer="Copyright 2026 Resham Joshi (iamtoruk) - AgentSeal. MIT License."
+        title={L('Links')}
+        footer={L('Copyright 2026 Resham Joshi (iamtoruk) - AgentSeal. MIT License.')}
       >
-        {LINKS.map(link => (
+        {links().map(link => (
           <button
             key={link.title}
             type="button"
@@ -147,10 +151,10 @@ function CommandRow({ label, hint, command }: { label: string; hint?: string; co
           <button
             type="button"
             className="btn"
-            aria-label={`Copy ${command} to the clipboard`}
+            aria-label={Lf('Copy %@ to the clipboard', command)}
             onClick={copy}
           >
-            {copied ? 'Copied' : 'Copy'}
+            {copied ? L('Copied') : L('Copy')}
           </button>
         </div>
       )}
@@ -162,27 +166,27 @@ function CommandRow({ label, hint, command }: { label: string; hint?: string; co
 /// modal: up to date, an update is available, or the check failed and why.
 function resultNote(update: UpdateState): string {
   const status = update.status
-  if (!status) return update.checking ? 'Checking GitHub for a newer release...' : ''
+  if (!status) return update.checking ? L('Checking GitHub for a newer release...') : ''
   if (status.storeManaged) {
-    return 'This copy came from the Microsoft Store, which keeps it up to date. There is nothing to check here.'
+    return L('This copy came from the Microsoft Store, which keeps it up to date. There is nothing to check here.')
   }
-  if (status.error) return `Check failed. ${status.error}`
+  if (status.error) return Lf('Check failed. %@', status.error)
   const parts: string[] = []
   if (status.updateAvailable && status.latestVersion) {
-    parts.push(`Version ${status.latestVersion} is available.`)
+    parts.push(Lf('%@ is available.', Lf('Version %@', status.latestVersion)))
   }
   if (status.cliUpdateAvailable && status.latestCliVersion) {
-    parts.push(`CLI ${status.latestCliVersion} is available (you have ${status.installedCliVersion ?? 'none'}).`)
+    parts.push(Lf('CLI %@ is available (you have %@).', status.latestCliVersion, status.installedCliVersion ?? L('none')))
   }
   if (parts.length === 0) {
-    return `You are on the latest version (${status.currentVersion}).`
+    return Lf('You are on the latest version (%@).', status.currentVersion)
   }
   if (status.updateAvailable) {
     parts.push(
-      'These builds are unsigned and do not update themselves, so CodeBurn will not install one for you. Download it from GitHub and Windows will vet it before it runs.',
+      L('These builds are unsigned and do not update themselves, so CodeBurn will not install one for you. Download it from GitHub and Windows will vet it before it runs.'),
     )
     if (status.cliTooOld) {
-      parts.push('Update the CLI first: the installed one is too old to install this app.')
+      parts.push(L('Update the CLI first: the installed one is too old to install this app.'))
     }
   }
   return parts.join(' ')
@@ -193,5 +197,5 @@ function resultNote(update: UpdateState): string {
 function lastChecked(update: UpdateState): string {
   const at = update.status?.checkedAt
   if (!at) return ''
-  return `Checked ${relativePast(new Date(at * 1000))}`
+  return Lf('Checked %@', relativePast(new Date(at * 1000)))
 }

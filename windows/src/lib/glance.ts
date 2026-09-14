@@ -9,6 +9,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { USD, formatCurrency } from './currency'
+import { L, Lf } from './i18n'
 
 export type LiveSession = {
   id: string
@@ -79,7 +80,7 @@ export function elapsedLabel(session: LiveSession, now = Date.now()): string {
   if (!Number.isFinite(started)) return ''
   const minutes = Math.floor(Math.max(0, now - started) / 60_000)
   const hours = Math.floor(minutes / 60)
-  return hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m`
+  return hours > 0 ? Lf('%lldh %lldm', hours, minutes % 60) : Lf('%lldm', minutes)
 }
 
 /// The model name identifies the row; the elapsed time says how long it has been at it.
@@ -95,8 +96,8 @@ export function sessionsFor(glance: Glance, providerId: string): LiveSession[] |
 }
 
 export function runningLabel(count: number): string {
-  if (count === 0) return 'none running'
-  return count === 1 ? '1 running' : `${count} running`
+  if (count === 0) return L('none running')
+  return count === 1 ? L('1 running') : Lf('%lld running', count)
 }
 
 /// The mac's asCompactTokens with its lowercased thousands: 182k beside the uppercase M and B.

@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import type { MenubarPayload } from '../lib/payload'
 import type { CurrencyState } from '../lib/currency'
-import { formatCompactCurrency, formatTokens, plural } from '../lib/currency'
+import { formatCompactCurrency, formatTokens } from '../lib/currency'
 import { relativeFuture } from '../lib/dates'
 import type { PlanProjection, PlanUsage } from '../lib/plan'
 import { projectQuotaWindow, projectWindow, earliestReset } from '../lib/plan'
 import { displayLabel, refreshQuota, summaryFor, type QuotaState, type QuotaSummary } from '../lib/quota'
+import { L, Lcount, Lf } from '../lib/i18n'
 import { ALL_PROVIDER, type Provider } from './AgentTabStrip'
 import { BulbIcon, ChevronRight, KeySlashIcon, PersonDashedIcon, WarningIcon, ArrowUpRight } from './Icons'
 
@@ -94,19 +95,19 @@ function ClaudePlan({ payload, currency, onOpenTerminal, onConnectClaude }: {
       return (
         <div className="plan-state">
           <PersonDashedIcon size={22} className="plan-state-icon" />
-          <div className="plan-state-title-muted">Loading your plan...</div>
-          <div className="plan-state-note">Reading Claude Code credentials from this machine.</div>
+          <div className="plan-state-title-muted">{L('Loading your plan...')}</div>
+          <div className="plan-state-note">{L('Reading Claude Code credentials from this machine.')}</div>
         </div>
       )
     case 'no_credentials':
       return (
         <div className="plan-state">
           <KeySlashIcon size={20} className="plan-state-icon" />
-          <div className="plan-state-title">No Claude subscription connected</div>
-          <div className="plan-state-note">Click Connect to sign in with Claude in a terminal, then return here.</div>
+          <div className="plan-state-title">{L('No Claude subscription connected')}</div>
+          <div className="plan-state-note">{L('Click Connect to sign in with Claude in a terminal, then return here.')}</div>
           <div className="plan-actions">
-            <button type="button" className="btn btn-prominent" onClick={() => onConnectClaude()}>Connect Claude</button>
-            <button type="button" className="btn" onClick={load}>Retry</button>
+            <button type="button" className="btn btn-prominent" onClick={() => onConnectClaude()}>{L('Connect Claude')}</button>
+            <button type="button" className="btn" onClick={load}>{L('Retry')}</button>
           </div>
         </div>
       )
@@ -114,11 +115,11 @@ function ClaudePlan({ payload, currency, onOpenTerminal, onConnectClaude }: {
       return (
         <div className="plan-state">
           <WarningIcon size={18} filled={false} className="plan-state-icon plan-state-icon-accent" />
-          <div className="plan-state-title">Couldn't load plan data</div>
+          <div className="plan-state-title">{L("Couldn't load plan data")}</div>
           <div className="plan-state-error">{state.message}</div>
           <div className="plan-actions">
-            <button type="button" className="btn btn-prominent" onClick={() => onConnectClaude()}>Reconnect Claude</button>
-            <button type="button" className="btn" onClick={load}>Retry</button>
+            <button type="button" className="btn btn-prominent" onClick={() => onConnectClaude()}>{L('Reconnect Claude')}</button>
+            <button type="button" className="btn" onClick={load}>{L('Retry')}</button>
           </div>
         </div>
       )
@@ -129,7 +130,7 @@ function ClaudePlan({ payload, currency, onOpenTerminal, onConnectClaude }: {
         <div className="plan-insight">
           <div className="plan-header">
             <span className="plan-tier">{usage.tier}</span>
-            {reset && <span className="plan-reset">Resets {relativeFuture(reset, now)}</span>}
+            {reset && <span className="plan-reset">{Lf('Resets %@', relativeFuture(reset, now))}</span>}
           </div>
           <div className="plan-rows">
             {usage.windows.map(w => (
@@ -140,9 +141,12 @@ function ClaudePlan({ payload, currency, onOpenTerminal, onConnectClaude }: {
             <button type="button" className="savings-badge" onClick={() => onOpenTerminal(['optimize'])}>
               <BulbIcon size={10} className="savings-badge-icon" />
               <span>
-                Save ~{formatCompactCurrency(payload.optimize.savingsUSD, currency)} / ~
-                {formatTokens((payload.optimize.savingsUSD / USD_PER_MILLION_EFFECTIVE_TOKENS) * MILLION)} tokens
-                {' · '}{plural(payload.optimize.findingCount, 'finding')}
+                {Lf(
+                  'Save ~%@ / ~%@ tokens · %@',
+                  formatCompactCurrency(payload.optimize.savingsUSD, currency),
+                  formatTokens((payload.optimize.savingsUSD / USD_PER_MILLION_EFFECTIVE_TOKENS) * MILLION),
+                  Lcount(payload.optimize.findingCount, '1 finding', '%lld findings'),
+                )}
               </span>
               <ChevronRight size={8} className="savings-badge-chevron" />
             </button>
@@ -170,10 +174,10 @@ function ProviderPlan({ summary }: { summary: QuotaSummary }) {
     return (
       <div className="plan-state">
         <KeySlashIcon size={20} className="plan-state-icon" />
-        <div className="plan-state-title">No {summary.name} credentials found</div>
-        <div className="plan-state-note">Sign in with the {summary.name} CLI first. Then click Try Again.</div>
+        <div className="plan-state-title">{Lf('No %@ credentials found', summary.name)}</div>
+        <div className="plan-state-note">{Lf('Sign in with the %@ CLI first. Then click Try Again.', summary.name)}</div>
         <div className="plan-actions">
-          <button type="button" className="btn btn-prominent" onClick={retry}>Try Again</button>
+          <button type="button" className="btn btn-prominent" onClick={retry}>{L('Try Again')}</button>
         </div>
       </div>
     )
@@ -182,10 +186,10 @@ function ProviderPlan({ summary }: { summary: QuotaSummary }) {
     return (
       <div className="plan-state">
         <WarningIcon size={18} filled={false} className="plan-state-icon plan-state-icon-accent" />
-        <div className="plan-state-title">Reconnect {summary.name}</div>
-        <div className="plan-state-error">{summary.reason ?? `Your ${summary.name} session has expired. Sign in again in your terminal, then click Reconnect.`}</div>
+        <div className="plan-state-title">{Lf('Reconnect %@', summary.name)}</div>
+        <div className="plan-state-error">{summary.reason ?? Lf('Your %@ session has expired. Sign in again in your terminal, then click Reconnect.', summary.name)}</div>
         <div className="plan-actions">
-          <button type="button" className="btn btn-prominent" onClick={retry}>Reconnect</button>
+          <button type="button" className="btn btn-prominent" onClick={retry}>{L('Reconnect')}</button>
         </div>
       </div>
     )
@@ -194,7 +198,7 @@ function ProviderPlan({ summary }: { summary: QuotaSummary }) {
     return (
       <div className="plan-state">
         <PersonDashedIcon size={22} className="plan-state-icon" />
-        <div className="plan-state-title-muted">Reading {summary.name} credentials...</div>
+        <div className="plan-state-title-muted">{Lf('Reading %@ credentials...', summary.name)}</div>
       </div>
     )
   }
@@ -214,7 +218,7 @@ function ProviderPlan({ summary }: { summary: QuotaSummary }) {
         {summary.windows.map((window, index) => (
           <UtilizationRow
             key={`${window.label}-${index}`}
-            label={`${displayLabel(window.label)} window`}
+            label={Lf('%@ window', displayLabel(window.label))}
             percent={window.usedPct}
             projection={projectQuotaWindow(window.label, window.usedPct, window.resetsAt, now)}
             now={now}
@@ -222,9 +226,9 @@ function ProviderPlan({ summary }: { summary: QuotaSummary }) {
         ))}
       </div>
       {summary.connection === 'transientFailure' && (
-        <div className="plan-note">{summary.name} temporarily unreachable. Retrying.</div>
+        <div className="plan-note">{Lf('%@ temporarily unreachable. Retrying.', summary.name)}</div>
       )}
-      {summary.connection === 'stale' && <div className="plan-note">Showing the last reading.</div>}
+      {summary.connection === 'stale' && <div className="plan-note">{L('Showing the last reading.')}</div>}
     </div>
   )
 }
@@ -240,10 +244,18 @@ function UtilizationRow({ label, percent, projection, now }: {
 
   let caption: string | null = null
   if (projection) {
-    const pct = Math.round(projection.percent)
-    if (projection.source === 'historical') caption = `Based on last cycle: ${pct}%`
-    else if (projection.willOverflow && projection.hitsLimitAt) caption = `On pace: ${pct}% at reset · hits 100% ${relativeFuture(projection.hitsLimitAt, now)}`
-    else caption = `On pace: ${pct}% at reset`
+    // The percent rides through the %@ the glossary's pace captions use, so the
+    // same sentences translate once for both apps.
+    const pct = `${Math.round(projection.percent)}%`
+    if (projection.source === 'historical') caption = Lf('Based on last cycle: %@', pct)
+    else if (projection.willOverflow && projection.hitsLimitAt) {
+      caption = Lf(
+        'On pace: %@ at reset · hits 100%% %@',
+        pct,
+        relativeFuture(projection.hitsLimitAt, now),
+      )
+    }
+    else caption = Lf('On pace: %@ at reset', pct)
   }
 
   return (

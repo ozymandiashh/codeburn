@@ -1,26 +1,38 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { addDays, formatDateKey, startOfDay, todayKey } from '../lib/dates'
+import { addDays, formatDateKey, startOfDay, todayKey, weekdayInitials } from '../lib/dates'
+import { L, Lf } from '../lib/i18n'
 import { CalendarIcon, ChevronLeft, ChevronRight } from './Icons'
 
 export type Period = 'today' | 'week' | '30days' | 'month' | 'all' | 'lifetime'
 
 /// Compact labels, as on the mac: six segments plus the calendar button share one narrow
-/// popover row, so "6 Months" and "Lifetime" would wrap.
-export const PERIOD_LABELS: Record<Period, string> = {
-  today: 'Today', week: '7D', '30days': '30D', month: 'Month', all: '6M', lifetime: 'Life',
+/// popover row, so "6 Months" and "Lifetime" would wrap. The glossary's own short forms,
+/// resolved at call time so they follow the UI language rather than the import order.
+export function periodLabel(period: Period): string {
+  switch (period) {
+    case 'today': return L('Today')
+    case 'week': return L('7D')
+    case '30days': return L('30D')
+    case 'month': return L('Month')
+    case 'all': return L('6M')
+    case 'lifetime': return L('Life')
+  }
 }
 
-/// Short phrase used in sentences ("Sessions (7 days)", "No Claude data for this month").
-export const PERIOD_PHRASES: Record<Period, string> = {
-  today: 'today',
-  week: 'the last 7 days',
-  '30days': 'the last 30 days',
-  month: 'this month',
-  all: 'the last 6 months',
-  lifetime: 'all time',
-}
+const PERIODS: Period[] = ['today', 'week', '30days', 'month', 'all', 'lifetime']
 
-const PERIODS = Object.keys(PERIOD_LABELS) as Period[]
+/// Short phrase used in sentences ("Sessions (7 days)", "No Claude data for this month"),
+/// resolved at call time so it follows the UI language.
+export function periodPhrase(period: Period): string {
+  switch (period) {
+    case 'today': return L('today')
+    case 'week': return L('the last 7 days')
+    case '30days': return L('the last 30 days')
+    case 'month': return L('this month')
+    case 'all': return L('the last 6 months')
+    case 'lifetime': return L('all time')
+  }
+}
 
 /// The days the reader picked in the calendar, sorted, empty when the period governs. One
 /// day goes to the CLI as `--day`, several as `--days`.
@@ -28,8 +40,8 @@ export type DaySelection = string[]
 
 export function daySelectionLabel(days: DaySelection): string | null {
   if (days.length === 0) return null
-  if (days.length === 1) return `Day (${days[0]})`
-  return `${days.length} days (${days[0]} .. ${days[days.length - 1]})`
+  if (days.length === 1) return Lf('Day (%@)', days[0])
+  return Lf('%lld days (%@ .. %@)', days.length, days[0], days[days.length - 1])
 }
 
 type Props = {
@@ -61,10 +73,10 @@ export function PeriodTabs({ selected, days, onSelect, onSelectDays }: Props) {
 
   return (
     <div className="period-wrap">
-      <nav className="period-tabs" aria-label="Period">
+      <nav className="period-tabs" aria-label={L('Period')}>
         {/* One choice out of six, which is a radio group rather than six toggles: a screen
             reader then says "3 of 6" and the arrow keys mean what they look like. */}
-        <div className="period-radios" role="radiogroup" aria-label="Period" ref={radios} onKeyDown={onKeyDown}>
+        <div className="period-radios" role="radiogroup" aria-label={L('Period')} ref={radios} onKeyDown={onKeyDown}>
           {PERIODS.map((p, i) => (
             <button
               key={p}
@@ -75,7 +87,7 @@ export function PeriodTabs({ selected, days, onSelect, onSelectDays }: Props) {
               tabIndex={i === activeIndex ? 0 : -1}
               onClick={() => onSelect(p)}
             >
-              {PERIOD_LABELS[p]}
+              {periodLabel(p)}
             </button>
           ))}
         </div>
@@ -83,7 +95,7 @@ export function PeriodTabs({ selected, days, onSelect, onSelectDays }: Props) {
           <button
             type="button"
             className={`period period-calendar ${dayMode ? 'period-active is-day-mode' : ''}`}
-            aria-label="Pick days"
+            aria-label={L('Pick dates')}
             aria-expanded={calendarOpen}
             onClick={() => setCalendarOpen(o => !o)}
           >
@@ -101,8 +113,6 @@ export function PeriodTabs({ selected, days, onSelect, onSelectDays }: Props) {
     </div>
   )
 }
-
-const WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
 
 type DayCell = { key: string; day: number; date: string; currentMonth: boolean }
 
@@ -146,15 +156,15 @@ function CalendarPopover({ days, onDone, onDismiss }: {
     })
   }
 
-  const summary = pending.size === 0 ? 'Pick dates' : pending.size === 1 ? '1 day' : `${pending.size} days`
+  const summary = pending.size === 0 ? L('Pick dates') : pending.size === 1 ? L('1 day') : Lf('%lld days', pending.size)
 
   return (
-    <div className="calendar-popover" ref={ref} role="dialog" aria-label="Pick days">
+    <div className="calendar-popover" ref={ref} role="dialog" aria-label={L('Pick dates')}>
       <div className="calendar-head">
         <button
           type="button"
           className="calendar-nav"
-          aria-label="Previous month"
+          aria-label={L('Previous month')}
           onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
         >
           <ChevronLeft size={10} />
@@ -165,7 +175,7 @@ function CalendarPopover({ days, onDone, onDismiss }: {
         <button
           type="button"
           className="calendar-nav"
-          aria-label="Next month"
+          aria-label={L('Next month')}
           disabled={!forwardOk}
           onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
         >
@@ -173,9 +183,9 @@ function CalendarPopover({ days, onDone, onDismiss }: {
         </button>
       </div>
       <div className="calendar-weekdays">
-        {WEEKDAYS.map(d => <span key={d}>{d}</span>)}
+        {weekdayInitials().map(d => <span key={d}>{d}</span>)}
       </div>
-      <div className="calendar-grid" role="group" aria-label="Days">
+      <div className="calendar-grid" role="group" aria-label={L('Days')}>
         {monthCells(month).map(cell => {
           const selected = pending.has(cell.date)
           const cls = [
@@ -203,7 +213,7 @@ function CalendarPopover({ days, onDone, onDismiss }: {
       </div>
       <div className="calendar-foot">
         {pending.size > 0 && (
-          <button type="button" className="calendar-clear" onClick={() => setPending(new Set())}>Clear</button>
+          <button type="button" className="calendar-clear" onClick={() => setPending(new Set())}>{L('Clear')}</button>
         )}
         <span className="calendar-summary">{summary}</span>
         <button
@@ -211,7 +221,7 @@ function CalendarPopover({ days, onDone, onDismiss }: {
           className={`calendar-done ${pending.size === 0 ? 'is-idle' : ''}`}
           onClick={() => onDone([...pending].sort())}
         >
-          Done
+          {L('Done')}
         </button>
       </div>
     </div>

@@ -17,6 +17,8 @@ export const CURRENCY_CODES = [
 ] as const
 
 /// Only the settings window spells the currency out; the footer picker stays on the code.
+/// The values are catalog keys (the menubar glossary's currency names), resolved through
+/// `L()` at the point of display so they follow the UI language.
 export const CURRENCY_NAMES: Record<string, string> = {
   USD: 'US Dollar',
   GBP: 'British Pound',

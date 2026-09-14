@@ -1,6 +1,7 @@
 import type { Model } from '../lib/payload'
 import type { CurrencyState } from '../lib/currency'
 import { formatCompactCurrency, formatTokens } from '../lib/currency'
+import { L, Lf } from '../lib/i18n'
 import { CollapsibleSection } from './CollapsibleSection'
 import { FixedBar, COL_COST, COL_COUNT } from './ActivitySection'
 
@@ -23,11 +24,11 @@ export function ModelsSection({ models, inputTokens, outputTokens, cacheHitPerce
 
   return (
     <CollapsibleSection
-      caption="Models"
+      caption={L('Models')}
       columns={[
-        { label: 'Cost', width: COL_COST },
-        ...(showSavings ? [{ label: 'Saved', width: COL_SAVED }] : []),
-        { label: 'Calls', width: COL_COUNT },
+        { label: L('Cost'), width: COL_COST },
+        ...(showSavings ? [{ label: L('Saved'), width: COL_SAVED }] : []),
+        { label: L('Calls'), width: COL_COUNT },
       ]}
     >
       {models.map(m => (
@@ -50,12 +51,12 @@ export function ModelsSection({ models, inputTokens, outputTokens, cacheHitPerce
       ))}
       {(inputTokens > 0 || outputTokens > 0) && (
         <div className="tokens-line">
-          <span className="tokens-label">Tokens</span>
-          <span className="tokens-value">{formatTokens(inputTokens)} in</span>
+          <span className="tokens-label">{L('Tokens')}</span>
+          <span className="tokens-value">{Lf('%@ in', formatTokens(inputTokens))}</span>
           <span className="tokens-sep">·</span>
-          <span className="tokens-value">{formatTokens(outputTokens)} out</span>
+          <span className="tokens-value">{Lf('%@ out', formatTokens(outputTokens))}</span>
           <span className="tokens-sep">·</span>
-          <span className="tokens-value">{Math.round(cacheHitPercent)}% cache hit</span>
+          <span className="tokens-value">{Lf('%@%% cache hit', `${Math.round(cacheHitPercent)}`)}</span>
         </div>
       )}
     </CollapsibleSection>

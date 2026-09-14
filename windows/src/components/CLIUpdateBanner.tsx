@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { EMPTY_UPDATE, subscribeUpdate, type UpdateState } from '../lib/update'
+import { L, Lf } from '../lib/i18n'
 import { ArrowUpRightCircleIcon, CheckIcon, CopyIcon } from './Icons'
 
 /// Port of CLIUpdateBanner in mac/.../Views/MenuBarContent.swift: a strip under the footer
@@ -30,12 +31,12 @@ export function CLIUpdateBanner() {
   return (
     <div className="cli-banner">
       <span className="cli-banner-icon" aria-hidden="true"><ArrowUpRightCircleIcon size={11} /></span>
-      <span className="cli-banner-text">CLI v{status.latestCliVersion} available, run</span>
+      <span className="cli-banner-text">{Lf('CLI v%@ available, run', status.latestCliVersion ?? '')}</span>
       <button
         type="button"
         className="cli-banner-copy"
-        title="Copy the update command to the clipboard"
-        aria-label={`Copy ${command} to the clipboard`}
+        title={L('Copy update command to clipboard')}
+        aria-label={Lf('Copy %@ to the clipboard', command)}
         onClick={copy}
       >
         <code>{command}</code>

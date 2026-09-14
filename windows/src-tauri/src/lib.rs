@@ -8,6 +8,7 @@ mod config;
 mod dock;
 mod fx;
 mod glance;
+mod i18n;
 mod plan;
 mod refresh;
 mod session;
@@ -245,6 +246,7 @@ pub fn run() {
             commands::open_claude_login,
             commands::export_usage,
             commands::quit_app,
+            commands::relaunch_app,
             commands::hide_popover,
             commands::set_tray_tooltip,
             commands::set_tray_badge,
@@ -308,9 +310,9 @@ fn build_tray_tauri(app: &AppHandle) -> tauri::Result<()> {
 
     // Disabled by design: the mac's menu opens with what today cost, which is the one thing
     // worth knowing without opening anything. The frontend fills it in on every refresh.
-    let usage = MenuItem::with_id(app, "usage", "Today", false, None::<&str>)?;
-    let open = MenuItem::with_id(app, "open", "Open CodeBurn", true, None::<&str>)?;
-    let refresh = MenuItem::with_id(app, "refresh", "Refresh", true, None::<&str>)?;
+    let usage = MenuItem::with_id(app, "usage", i18n::l("Today"), false, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", i18n::l("Open CodeBurn"), true, None::<&str>)?;
+    let refresh = MenuItem::with_id(app, "refresh", i18n::l("Refresh"), true, None::<&str>)?;
     let theme = MenuItem::with_id(
         app,
         "toggle_theme",
@@ -318,26 +320,22 @@ fn build_tray_tauri(app: &AppHandle) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
-    let settings = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
-    let dock_settings = MenuItem::with_id(
-        app,
-        "dock_settings",
-        "Capacity Dock Settings...",
-        true,
-        None::<&str>,
-    )?;
+    let settings = MenuItem::with_id(app, "settings", i18n::l("Settings…"), true, None::<&str>)?;
+    let dock_settings =
+        MenuItem::with_id(app, "dock_settings", i18n::l("Capacity Dock Settings…"), true, None::<&str>)?;
     let capacity_dock = CheckMenuItem::with_id(
         app,
         "toggle_dock",
-        "Show Capacity Dock",
+        i18n::l("Show Capacity Dock"),
         true,
         dock::is_enabled(),
         None::<&str>,
     )?;
-    let report = MenuItem::with_id(app, "report", "Open Full Report", true, None::<&str>)?;
-    let updates = MenuItem::with_id(app, "check_updates", "Check for Updates", true, None::<&str>)?;
-    let about = MenuItem::with_id(app, "about", "About CodeBurn", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit CodeBurn", true, None::<&str>)?;
+    let report = MenuItem::with_id(app, "report", i18n::l("Open Full Report"), true, None::<&str>)?;
+    let updates =
+        MenuItem::with_id(app, "check_updates", i18n::l("Check for Updates"), true, None::<&str>)?;
+    let about = MenuItem::with_id(app, "about", i18n::l("About CodeBurn"), true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", i18n::l("Quit CodeBurn"), true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     // Inside a Store package the update check never runs, so the item that opens its result
     // would only ever say there is nothing to check. It is not offered at all there.
@@ -621,9 +619,9 @@ fn next_theme(current: &str) -> &'static str {
 /// reads as a verb.
 fn theme_menu_text(current: &str) -> String {
     match next_theme(current) {
-        "light" => "Switch to Light Theme".into(),
-        "dark" => "Switch to Dark Theme".into(),
-        _ => "Switch to System Theme".into(),
+        "light" => i18n::l("Switch to Light Theme"),
+        "dark" => i18n::l("Switch to Dark Theme"),
+        _ => i18n::l("Switch to System Theme"),
     }
 }
 
@@ -1053,6 +1051,15 @@ mod commands {
     #[tauri::command]
     pub fn quit_app(app: AppHandle) {
         app.exit(0);
+    }
+
+    /// The language picker's Relaunch button: the tray menu and the loaded pages were built
+    /// in the language read at launch, so applying a new one means starting over. Restart
+    /// re-execs this process with the same argv (the single-instance plugin is satisfied by
+    /// the old process leaving first, which `restart` guarantees).
+    #[tauri::command]
+    pub fn relaunch_app(app: AppHandle) {
+        app.restart();
     }
 
     #[tauri::command]

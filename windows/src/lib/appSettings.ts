@@ -13,26 +13,29 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { readSetting, writeSetting } from './settings'
+import { L, type LanguageChoice } from './i18n'
 
 /// What the tray shows beside the flame. The mac's fifth choice, Credits (Codex), is not
 /// here: it reads `current.codexCredits`, which the CLI payload does not carry.
 export type DisplayMetric = 'cost' | 'tokens' | 'totalTokens' | 'iconOnly'
 
-export const DISPLAY_METRICS: Array<{ id: DisplayMetric; label: string }> = [
-  { id: 'cost', label: 'Cost ($)' },
-  { id: 'tokens', label: 'Tokens (up/down)' },
-  { id: 'totalTokens', label: 'Total Tokens' },
-  { id: 'iconOnly', label: 'Icon Only' },
+/// The picker reads the labels through L() on each render, so it follows the
+/// frozen UI language without the arrays themselves being rebuilt.
+export const DISPLAY_METRICS: Array<{ id: DisplayMetric; label: () => string }> = [
+  { id: 'cost', label: () => L('Cost ($)') },
+  { id: 'tokens', label: () => L('Tokens (up/down)') },
+  { id: 'totalTokens', label: () => L('Total Tokens') },
+  { id: 'iconOnly', label: () => L('Icon Only') },
 ]
 
 /// Period.menubarMetricCases: the four the tray figure may be measured over.
 export type MenubarPeriod = 'today' | 'week' | 'month' | 'all'
 
-export const MENUBAR_PERIODS: Array<{ id: MenubarPeriod; label: string }> = [
-  { id: 'today', label: 'Today' },
-  { id: 'week', label: 'Week' },
-  { id: 'month', label: 'Month' },
-  { id: 'all', label: '6 Months' },
+export const MENUBAR_PERIODS: Array<{ id: MenubarPeriod; label: () => string }> = [
+  { id: 'today', label: () => L('Today') },
+  { id: 'week', label: () => L('Week') },
+  { id: 'month', label: () => L('Month') },
+  { id: 'all', label: () => L('6 Months') },
 ]
 
 /// Period.menubarSuffix, the compact form the mac appends to the tray figure.
@@ -48,7 +51,7 @@ export type MenubarScope = 'local' | 'combined'
 export type ThemeChoice = 'system' | 'light' | 'dark'
 
 /// System, then Light, then Dark, then back. The tray item and the popover's More menu both
-/// step through this, and both name the state they move to rather than the one they are in.
+/// step through this, and both name the state they move to rather than the one it is in.
 /// Kept in step by hand with `next_theme` in src-tauri/src/lib.rs, which the tray reads
 /// before any webview exists.
 export function nextTheme(current: ThemeChoice): ThemeChoice {
@@ -57,39 +60,39 @@ export function nextTheme(current: ThemeChoice): ThemeChoice {
 
 export function themeCycleLabel(current: ThemeChoice): string {
   const next = nextTheme(current)
-  if (next === 'light') return 'Switch to Light Theme'
-  if (next === 'dark') return 'Switch to Dark Theme'
-  return 'Switch to System Theme'
+  if (next === 'light') return L('Switch to Light Theme')
+  if (next === 'dark') return L('Switch to Dark Theme')
+  return L('Switch to System Theme')
 }
 
 /// UsageRefreshCadence. Auto is the adaptive default, manual never auto-spawns.
-export const USAGE_CADENCES: Array<{ id: number; label: string }> = [
+export const USAGE_CADENCES: Array<{ id: number; label: () => string }> = [
   // The mac's label promises "less on battery", which is the adaptive refresh that comes
   // with the data-layer work; this one says what it actually does today.
-  { id: -1, label: 'Auto (2m, less on battery)' },
-  { id: 0, label: 'Manual' },
-  { id: 60, label: '1 minute' },
-  { id: 300, label: '5 minutes' },
-  { id: 900, label: '15 minutes' },
+  { id: -1, label: () => L('Auto (2m, less on battery)') },
+  { id: 0, label: () => L('Manual') },
+  { id: 60, label: () => L('1 minute') },
+  { id: 300, label: () => L('5 minutes') },
+  { id: 900, label: () => L('15 minutes') },
 ]
 
 /// SubscriptionRefreshCadence, which the quota store polls on.
-export const QUOTA_CADENCES: Array<{ id: number; label: string }> = [
-  { id: 0, label: 'Manual' },
-  { id: 60, label: '1 minute' },
-  { id: 120, label: '2 minutes' },
-  { id: 300, label: '5 minutes' },
-  { id: 900, label: '15 minutes' },
+export const QUOTA_CADENCES: Array<{ id: number; label: () => string }> = [
+  { id: 0, label: () => L('Manual') },
+  { id: 60, label: () => L('1 minute') },
+  { id: 120, label: () => L('2 minutes') },
+  { id: 300, label: () => L('5 minutes') },
+  { id: 900, label: () => L('15 minutes') },
 ]
 
 /// PreferredTerminal, with the Windows consoles that can hold a command open in a live
 /// window. Detection of what is actually installed happens in Rust.
 export type TerminalId = 'windowsTerminal' | 'powershell' | 'commandPrompt'
 
-export const TERMINALS: Array<{ id: TerminalId; label: string }> = [
-  { id: 'windowsTerminal', label: 'Windows Terminal' },
-  { id: 'powershell', label: 'Windows PowerShell' },
-  { id: 'commandPrompt', label: 'Command Prompt' },
+export const TERMINALS: Array<{ id: TerminalId; label: () => string }> = [
+  { id: 'windowsTerminal', label: () => L('Windows Terminal') },
+  { id: 'powershell', label: () => L('Windows PowerShell') },
+  { id: 'commandPrompt', label: () => L('Command Prompt') },
 ]
 
 export type AppSettings = {
@@ -102,6 +105,9 @@ export type AppSettings = {
   usageRefreshSeconds: number
   quotaCadenceSeconds: number
   terminal: TerminalId
+  /// The UI language. `system` follows the Windows UI language; a change applies on
+  /// the next launch, because the Rust tray menu is built before any webview exists.
+  language: LanguageChoice
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -116,6 +122,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   usageRefreshSeconds: -1,
   quotaCadenceSeconds: 120,
   terminal: 'windowsTerminal',
+  language: 'system',
 }
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
@@ -139,6 +146,7 @@ export function parseSettings(raw: Record<string, unknown>): AppSettings {
     usageRefreshSeconds: oneOfNumber(raw.usageRefreshSeconds, USAGE_CADENCES.map(c => c.id), DEFAULT_SETTINGS.usageRefreshSeconds),
     quotaCadenceSeconds: oneOfNumber(raw.quotaCadenceSeconds, QUOTA_CADENCES.map(c => c.id), DEFAULT_SETTINGS.quotaCadenceSeconds),
     terminal: oneOf(raw.terminal, TERMINALS.map(t => t.id), DEFAULT_SETTINGS.terminal),
+    language: oneOf(raw.language, ['system', 'en', 'zh-Hans'] as const, DEFAULT_SETTINGS.language),
   }
 }
 

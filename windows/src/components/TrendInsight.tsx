@@ -3,6 +3,7 @@ import type { DailyEntry, DailyModel } from '../lib/payload'
 import type { CurrencyState } from '../lib/currency'
 import { formatCompactCurrency, formatCurrency, formatTokens } from '../lib/currency'
 import { todayKey, formatDateKey, addDays, startOfDay, prettyDate, shortDate } from '../lib/dates'
+import { L, Lf } from '../lib/i18n'
 import { ArrowUpRight, ArrowDownRight } from './Icons'
 import type { DaySelection, Period } from './PeriodTabs'
 
@@ -87,20 +88,20 @@ export function TrendInsight({ days, currency, dayCount }: Props) {
   const barGap = dayCount > 45 ? 2 : 4
 
   const fmtVal = (v: number) => useTokens ? `${formatTokens(v)} tok` : formatCompactCurrency(v, currency)
-  const heroText = useTokens ? `${formatTokens(totalTokens)} tokens` : formatCurrency(totalCost, currency)
+  const heroText = useTokens ? Lf('%@ tokens', formatTokens(totalTokens)) : formatCurrency(totalCost, currency)
   const hovered = hoveredIdx !== null ? bars[hoveredIdx] : null
 
   return (
     <div className="trend-insight">
       <div className="insight-header">
         <div>
-          <div className="insight-sublabel">Last {dayCount} days</div>
+          <div className="insight-sublabel">{Lf('Last %lld days', dayCount)}</div>
           <div className="insight-hero">{heroText}</div>
         </div>
         {delta !== null && (
           <div className="delta-badge">
             {delta >= 0 ? <ArrowUpRight size={9} /> : <ArrowDownRight size={9} />}
-            <span>{delta >= 0 ? '+' : ''}{Math.round(delta)}% vs prior {dayCount}d</span>
+            <span>{Lf('%@%% vs prior %lldd', `${delta >= 0 ? '+' : ''}${Math.round(delta)}`, dayCount)}</span>
           </div>
         )}
       </div>
@@ -108,7 +109,7 @@ export function TrendInsight({ days, currency, dayCount }: Props) {
       <div
         className="trend-chart"
         role="group"
-        aria-label={`Daily spend, last ${dayCount} days`}
+        aria-label={Lf('Daily spend, last %lld days', dayCount)}
         onMouseLeave={() => setHoveredIdx(null)}
       >
         <div className="trend-bars" style={{ gap: `${barGap}px` }}>
@@ -127,7 +128,7 @@ export function TrendInsight({ days, currency, dayCount }: Props) {
                 className="trend-bar-col"
                 // A painted column with no text: the day and the figure live in its label.
                 role="img"
-                aria-label={`${prettyDate(bar.date)}: ${fmtVal(val)}`}
+                aria-label={Lf('%@: %@', prettyDate(bar.date), fmtVal(val))}
                 onMouseEnter={() => setHoveredIdx(i)}
               >
                 <div className={cls} style={{ height: `${Math.max(MIN_BAR_PCT, pct)}%` }} />
@@ -159,17 +160,17 @@ export function TrendInsight({ days, currency, dayCount }: Props) {
 
       <div className="mini-stats">
         <div className="mini-stat">
-          <div className="mini-stat-label">Avg/day</div>
+          <div className="mini-stat-label">{L('Avg/day')}</div>
           <div className="mini-stat-value">{fmtVal(avgVal)}</div>
         </div>
         <div className="mini-stat">
-          <div className="mini-stat-label">Peak</div>
+          <div className="mini-stat-label">{L('Peak')}</div>
           <div className="mini-stat-value">
-            {peak ? `${fmtVal(metric(peak))} on ${shortDate(peak.date)}` : '-'}
+            {peak ? Lf('%@ on %@', fmtVal(metric(peak)), shortDate(peak.date)) : '-'}
           </div>
         </div>
         <div className="mini-stat">
-          <div className="mini-stat-label">Yesterday</div>
+          <div className="mini-stat-label">{L('Yesterday')}</div>
           <div className="mini-stat-value">{yesterday ? fmtVal(metric(yesterday)) : '-'}</div>
         </div>
       </div>

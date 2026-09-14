@@ -2,10 +2,13 @@ import type { CombinedUsage, MenubarPayload } from '../lib/payload'
 import type { CurrencyState } from '../lib/currency'
 import { formatCurrency, formatTokens } from '../lib/currency'
 import { prettyDate, todayKey } from '../lib/dates'
+import { L, Lf } from '../lib/i18n'
 import { SectionCaption } from './CollapsibleSection'
 import { ArrowDownRight, ArrowUpRight, LeafIcon, MonitorIcon, WarningIcon } from './Icons'
 import type { DisplayMetric } from '../lib/appSettings'
-import { formatCombinedSessionCount, formatSessionCount, sessionCountIsExact, COMBINED_SESSION_COUNT_HELP, SESSION_COUNT_HELP } from '../lib/session-count-label'
+import {
+  formatCombinedSessionCount, formatSessionCount, sessionCountIsExact, COMBINED_SESSION_COUNT_HELP, SESSION_COUNT_HELP,
+} from '../lib/session-count-label'
 
 type Props = {
   payload: MenubarPayload | null
@@ -22,7 +25,6 @@ type Props = {
 }
 
 export function HeroSection({ payload, currency, periodLabel, isToday, dailyBudget, metric, combinedScope }: Props) {
-  const todayLabel = prettyDate(todayKey())
   // Pulling the peers is best effort in the CLI, so combined scope can come back with local
   // totals and no `combined` block. The hero then reads as a plain local view, plus a note.
   const combined = combinedScope ? payload?.combined ?? null : null
@@ -34,8 +36,8 @@ export function HeroSection({ payload, currency, periodLabel, isToday, dailyBudg
     ? formatCombinedSessionCount()
     : formatSessionCount(sessions, payload?.current.sessionCountBasis)
   const sessionHelp = combined
-    ? COMBINED_SESSION_COUNT_HELP
-    : (sessionCountIsExact(payload?.current.sessionCountBasis) ? undefined : SESSION_COUNT_HELP)
+    ? COMBINED_SESSION_COUNT_HELP()
+    : (sessionCountIsExact(payload?.current.sessionCountBasis) ? undefined : SESSION_COUNT_HELP())
   const inputTokens = totals?.inputTokens ?? payload?.current.inputTokens ?? 0
   const outputTokens = totals?.outputTokens ?? payload?.current.outputTokens ?? 0
 
@@ -47,7 +49,11 @@ export function HeroSection({ payload, currency, periodLabel, isToday, dailyBudg
     : formatCurrency(cost, currency)
 
   const label = payload?.current.label || periodLabel
-  const caption = combined ? `Combined · ${label}` : isToday ? `Today · ${todayLabel}` : label
+  const caption = combined
+    ? Lf('Combined · %@', label)
+    : isToday
+      ? Lf('Today · %@', prettyDate(todayKey()))
+      : label
   // The spend limit is stored in the display currency, as the CLI's own budget.daily is, and
   // reaches this component already converted to the dollars the payload is measured in. It is
   // printed back in the display currency, which is what the reader typed. Combined totals are
@@ -63,7 +69,7 @@ export function HeroSection({ payload, currency, periodLabel, isToday, dailyBudg
         {payload ? (
           <div className="hero-amount">{headline}</div>
         ) : (
-          <div className="hero-amount hero-skeleton" aria-label="Loading" />
+          <div className="hero-amount hero-skeleton" aria-label={L('Loading')} />
         )}
         <div className="hero-meta">
           {!payload ? (
@@ -78,7 +84,7 @@ export function HeroSection({ payload, currency, periodLabel, isToday, dailyBudg
             </>
           ) : (
             <>
-              <span className="hero-calls">{calls.toLocaleString()} {calls === 1 ? 'call' : 'calls'}</span>
+              <span className="hero-calls">{Lf(calls === 1 ? '%@ call' : '%@ calls', calls.toLocaleString())}</span>
               <span className="hero-sessions" title={sessionHelp}>{sessionLabel}</span>
             </>
           )}
@@ -88,7 +94,10 @@ export function HeroSection({ payload, currency, periodLabel, isToday, dailyBudg
         <div className="hero-note hero-note-warn">
           <WarningIcon size={10} />
           <span>
-            Daily budget of {isTokenMetric ? `${formatTokens(dailyBudget)} tok` : formatCurrency(dailyBudget, currency)} exceeded
+            {Lf(
+              'Daily budget of %@ exceeded',
+              isTokenMetric ? `${formatTokens(dailyBudget)} tok` : formatCurrency(dailyBudget, currency),
+            )}
           </span>
         </div>
       )}
@@ -97,7 +106,7 @@ export function HeroSection({ payload, currency, periodLabel, isToday, dailyBudg
       ) : combinedScope && payload !== null ? (
         <div className="hero-note hero-note-muted">
           <WarningIcon size={10} />
-          <span>Combined unavailable · showing local</span>
+          <span>{L('Combined unavailable · showing local')}</span>
         </div>
       ) : null}
       {/* Actual spend above, hypothetical avoided spend here: kept apart so the two are
@@ -105,7 +114,7 @@ export function HeroSection({ payload, currency, periodLabel, isToday, dailyBudg
       {savings > 0 && (
         <div className="hero-note hero-note-saved">
           <LeafIcon size={10} />
-          <span>Saved {formatCurrency(savings, currency)} with local models</span>
+          <span>{Lf('Saved %@ with local models', formatCurrency(savings, currency))}</span>
         </div>
       )}
     </section>
@@ -117,14 +126,14 @@ function DeviceBreakdown({ usage, currency }: { usage: CombinedUsage; currency: 
     <div className="device-breakdown">
       <div className="hero-note hero-note-muted">
         <MonitorIcon size={10} />
-        <span>{usage.combined.reachableCount} of {usage.combined.deviceCount} devices</span>
+        <span>{Lf('%lld of %lld devices', usage.combined.reachableCount, usage.combined.deviceCount)}</span>
       </div>
       {usage.perDevice.map(device => (
         <div key={device.id} className="device-row">
           <span className={`device-dot ${device.error ? 'is-error' : ''}`} />
-          <span className="device-name">{device.local ? `${device.name} · local` : device.name}</span>
+          <span className="device-name">{device.local ? Lf('%@ · local', device.name) : device.name}</span>
           <span className="device-cost">
-            {device.error ? 'Unavailable' : formatCurrency(device.cost, currency)}
+            {device.error ? L('Unavailable') : formatCurrency(device.cost, currency)}
           </span>
           <span className="device-tokens">{formatTokens(device.totalTokens)}</span>
         </div>

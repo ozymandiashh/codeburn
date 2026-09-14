@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import type { MenubarPayload, RetryTax, RoutingWaste } from '../lib/payload'
 import type { CurrencyState } from '../lib/currency'
-import { formatCompactCurrency, plural } from '../lib/currency'
+import { formatCompactCurrency } from '../lib/currency'
+import { L, Lf } from '../lib/i18n'
 import { ChevronRight, RetryIcon, RouteIcon } from './Icons'
 
 /// Port of OptimizeInsight in mac/.../Views/HeatmapSection.swift: the two kinds of spend the
@@ -18,8 +19,7 @@ export function OptimizeInsight({ payload, currency }: { payload: MenubarPayload
   if (totalWaste <= 0) {
     return (
       <div className="optimize-empty">
-        Nothing to optimize in this period. No retries and no calls that a cheaper model
-        would have handled.
+        {L('Nothing to optimize in this period. No retries and no calls that a cheaper model would have handled.')}
       </div>
     )
   }
@@ -29,12 +29,12 @@ export function OptimizeInsight({ payload, currency }: { payload: MenubarPayload
       {cost > 0 && (
         <div className="insight-header optimize-headline">
           <div>
-            <div className="insight-sublabel">Potential savings</div>
+            <div className="insight-sublabel">{L('Potential savings')}</div>
             <div className="optimize-total">{formatCompactCurrency(totalWaste, currency)}</div>
           </div>
           <div className="optimize-share">
-            <div className="optimize-share-pct">{Math.round((totalWaste / cost) * 100)}% of spend</div>
-            <div className="optimize-share-note">could be optimized</div>
+            <div className="optimize-share-pct">{Lf('%lld%% of spend', Math.round((totalWaste / cost) * 100))}</div>
+            <div className="optimize-share-note">{L('could be optimized')}</div>
           </div>
         </div>
       )}
@@ -56,7 +56,7 @@ function RetryTaxRow({ retryTax, totalCost, currency }: {
     <div className="waste-block is-retry">
       <button type="button" className="waste-head" aria-expanded={expanded} onClick={() => setExpanded(e => !e)}>
         <RetryIcon size={9} className="waste-icon" />
-        <span className="waste-title">Retry tax</span>
+        <span className="waste-title">{L('Retry tax')}</span>
         <span className="waste-spacer" />
         <span className="waste-total">{formatCompactCurrency(retryTax.totalUSD, currency)}</span>
         {totalCost > 0 && (
@@ -65,7 +65,7 @@ function RetryTaxRow({ retryTax, totalCost, currency }: {
         <ChevronRight size={7} className={`chevron ${expanded ? 'chevron-open' : ''}`} />
       </button>
       <div className="waste-note">
-        {plural(retryTax.retries, 'retry', 'retries')} across {plural(retryTax.editTurns, 'edit')}
+        {Lf('%lld retries across %lld edits', retryTax.retries, retryTax.editTurns)}
       </div>
       {expanded && (
         <div className="waste-rows">
@@ -74,7 +74,7 @@ function RetryTaxRow({ retryTax, totalCost, currency }: {
               <span className="waste-row-name">{model.name}</span>
               <span className="waste-spacer" />
               {model.retriesPerEdit != null && (
-                <span className="waste-row-note">{model.retriesPerEdit.toFixed(1)} ret/edit</span>
+                <span className="waste-row-note">{Lf('%@ ret/edit', model.retriesPerEdit.toFixed(1))}</span>
               )}
               <span className="waste-row-value">{formatCompactCurrency(model.taxUSD, currency)}</span>
             </div>
@@ -97,7 +97,7 @@ function RoutingWasteRow({ routingWaste, totalCost, currency }: {
     <div className="waste-block is-routing">
       <button type="button" className="waste-head" aria-expanded={expanded} onClick={() => setExpanded(e => !e)}>
         <RouteIcon size={9} className="waste-icon" />
-        <span className="waste-title">Routing waste</span>
+        <span className="waste-title">{L('Routing waste')}</span>
         <span className="waste-spacer" />
         <span className="waste-total">{formatCompactCurrency(routingWaste.totalSavingsUSD, currency)}</span>
         {totalCost > 0 && (
@@ -107,7 +107,11 @@ function RoutingWasteRow({ routingWaste, totalCost, currency }: {
       </button>
       {routingWaste.baselineModel !== '' && (
         <div className="waste-note">
-          vs {routingWaste.baselineModel} @ {formatCompactCurrency(routingWaste.baselineCostPerEdit, currency)}/edit
+          {Lf(
+            'vs %@ @ %@/edit',
+            routingWaste.baselineModel,
+            formatCompactCurrency(routingWaste.baselineCostPerEdit, currency),
+          )}
         </div>
       )}
       {expanded && (
@@ -116,7 +120,7 @@ function RoutingWasteRow({ routingWaste, totalCost, currency }: {
             <div key={model.name} className="waste-row">
               <span className="waste-row-name">{model.name}</span>
               <span className="waste-spacer" />
-              <span className="waste-row-note">{formatCompactCurrency(model.costPerEdit, currency)}/edit</span>
+              <span className="waste-row-note">{Lf('%@/edit', formatCompactCurrency(model.costPerEdit, currency))}</span>
               <span className="waste-row-value">{formatCompactCurrency(model.savingsUSD, currency)}</span>
             </div>
           ))}

@@ -10,6 +10,7 @@ import {
   type AppSettings, type DisplayMetric, type MenubarPeriod, type MenubarScope, type ThemeChoice,
 } from '../lib/appSettings'
 import { applyTheme } from '../lib/settings'
+import { L, Lf, type LanguageChoice } from '../lib/i18n'
 import { TRAY_BADGE_SUPPORTED, homePath } from '../lib/platform'
 import { summaryFor, type QuotaState } from '../lib/quota'
 import {
@@ -89,70 +90,79 @@ export function GeneralPane({ quota, anchor }: Props) {
   return (
     <Pane>
       <Group
-        title="Display"
-        footer={`The currency is shared with the CLI through ${homePath('.config', 'codeburn', 'config.json')}.`}
+        title={L('Display')}
+        footer={Lf(
+          'The currency is shared with the CLI through %@.',
+          homePath('.config', 'codeburn', 'config.json'),
+        )}
       >
         <Row
-          label="Currency"
+          label={L('Currency')}
           control={
             <Select
-              ariaLabel="Currency"
+              ariaLabel={L('Currency')}
               value={currency.code}
-              options={CURRENCY_CODES.map(code => ({ id: code as string, label: `${code} - ${CURRENCY_NAMES[code] ?? code}` }))}
+              options={CURRENCY_CODES.map(code => ({
+                id: code as string,
+                label: `${code} - ${L(CURRENCY_NAMES[code] ?? code)}`,
+              }))}
               onChange={applyCurrency}
             />
           }
         />
         {currencyError && <Note><span className="stg-error">{currencyError}</span></Note>}
         <Row
-          label="Metric"
-          hint="What the number beside the tray flame counts."
+          label={L('Metric')}
+          hint={L("What the number beside the tray flame counts.")}
           control={
             <Select
-              ariaLabel="Metric"
+              ariaLabel={L('Metric')}
               value={settings.metric}
-              options={DISPLAY_METRICS}
+              options={DISPLAY_METRICS.map(m => ({ id: m.id, label: m.label() }))}
               onChange={(metric: DisplayMetric) => writeSettings({ metric })}
             />
           }
         />
         <Row
-          label="Period"
-          hint="How far back that number reaches."
+          label={L('Period')}
+          hint={L('How far back that number reaches.')}
           control={
             <Select
-              ariaLabel="Period"
+              ariaLabel={L('Period')}
               value={settings.menubarPeriod}
-              options={MENUBAR_PERIODS}
+              options={MENUBAR_PERIODS.map(p => ({ id: p.id, label: p.label() }))}
               onChange={(menubarPeriod: MenubarPeriod) => writeSettings({ menubarPeriod })}
             />
           }
         />
         <Row
-          label="Scope"
-          hint="Combined adds every paired device the CLI can reach."
+          label={L('Scope')}
+          hint={L('Combined adds every paired device the CLI can reach.')}
           control={
             <Select
-              ariaLabel="Scope"
+              ariaLabel={L('Scope')}
               value={settings.menubarScope}
-              options={[{ id: 'local' as MenubarScope, label: 'Local' }, { id: 'combined' as MenubarScope, label: 'Combined' }]}
+              options={[
+                { id: 'local' as MenubarScope, label: L('Local') },
+                { id: 'combined' as MenubarScope, label: L('Combined') },
+              ]}
               onChange={(menubarScope: MenubarScope) => writeSettings({ menubarScope })}
             />
           }
         />
         <Row
-          label="Accent"
-          hint="Tints the popover, this window and the Capacity Dock."
+          label={L('Accent')}
+          hint={L('Tints the popover, this window and the Capacity Dock.')}
           control={
-            <div className="stg-swatches" role="radiogroup" aria-label="Accent">
+            <div className="stg-swatches" role="radiogroup" aria-label={L('Accent')}>
               {ACCENT_PRESETS.map(preset => (
                 <button
                   key={preset.id}
                   type="button"
                   role="radio"
                   aria-checked={settings.accent === preset.id}
-                  aria-label={preset.label}
-                  title={preset.label}
+                  aria-label={preset.label()}
+                  title={preset.label()}
                   className={`stg-swatch ${settings.accent === preset.id ? 'stg-swatch-on' : ''}`}
                   style={{ background: preset.base }}
                   onClick={() => chooseAccent(preset.id)}
@@ -165,22 +175,22 @@ export function GeneralPane({ quota, anchor }: Props) {
 
       <CapacityDockSection quota={quota} />
 
-      <Group title="Usage Refresh">
+      <LanguageSection settings={settings} />
+
+      <Group title={L('Usage Refresh')}>
         <Row
-          label="Update every"
+          label={L('Update every')}
           control={
             <Select
-              ariaLabel="Usage refresh cadence"
+              ariaLabel={L('Usage refresh cadence')}
               value={settings.usageRefreshSeconds}
-              options={USAGE_CADENCES}
+              options={USAGE_CADENCES.map(c => ({ id: c.id, label: c.label() }))}
               onChange={usageRefreshSeconds => writeSettings({ usageRefreshSeconds })}
             />
           }
         />
         <Note>
-          How often the tray figure re-reads your local session data. Auto refreshes every
-          minute while the popover is open and every two minutes when it is closed. Manual only
-          refreshes when you open the popover or press Refresh.
+          {L('How often the tray figure re-reads your local session data. Auto refreshes every minute while the popover is open and every two minutes when it is closed. Manual only refreshes when you open the popover or press Refresh.')}
         </Note>
       </Group>
 
@@ -188,28 +198,28 @@ export function GeneralPane({ quota, anchor }: Props) {
 
       <AlertsSection settings={settings} currency={currency} />
 
-      <Group title="System">
+      <Group title={L('System')}>
         <Row
-          label="Theme"
+          label={L('Theme')}
           control={
             <Select
-              ariaLabel="Theme"
+              ariaLabel={L('Theme')}
               value={settings.theme}
               options={[
-                { id: 'system' as ThemeChoice, label: 'System' },
-                { id: 'light' as ThemeChoice, label: 'Light' },
-                { id: 'dark' as ThemeChoice, label: 'Dark' },
+                { id: 'system' as ThemeChoice, label: L('System') },
+                { id: 'light' as ThemeChoice, label: L('Light') },
+                { id: 'dark' as ThemeChoice, label: L('Dark') },
               ]}
               onChange={chooseTheme}
             />
           }
         />
         <Row
-          label="Launch at login"
-          hint="Start CodeBurn in the tray when you sign in."
+          label={L('Launch at login')}
+          hint={L('Start CodeBurn in the tray when you sign in.')}
           control={
             <Switch
-              ariaLabel="Launch at login"
+              ariaLabel={L('Launch at login')}
               on={loginItem === true}
               disabled={loginItem === null}
               onToggle={toggleLogin}
@@ -219,11 +229,11 @@ export function GeneralPane({ quota, anchor }: Props) {
         {loginError && <Note><span className="stg-error">{loginError}</span></Note>}
         {TRAY_BADGE_SUPPORTED && (
           <Row
-            label="Show today's figure in the tray"
-            hint="A second tray icon carrying the number, next to the logo."
+            label={L("Show today's figure in the tray")}
+            hint={L('A second tray icon carrying the number, next to the logo.')}
             control={
               <Switch
-                ariaLabel="Show today's figure in the tray"
+                ariaLabel={L("Show today's figure in the tray")}
                 on={settings.trayBadge}
                 onToggle={() => writeSettings({ trayBadge: !settings.trayBadge })}
               />
@@ -234,6 +244,51 @@ export function GeneralPane({ quota, anchor }: Props) {
 
       <TelemetrySection />
     </Pane>
+  )
+}
+
+/// The UI language, the counterpart of the mac's Language section. Each language names
+/// itself (a reader opening a picker written in a language they cannot read is stranded), so
+/// only the System row translates. The choice lands in windows-settings.json beside the
+/// other tray preferences, and applies on the next launch: the tray menu the Rust side built
+/// reads the language once, at startup, so a mid-run switch would split the app in two —
+/// the note and the Relaunch button say so instead of pretending otherwise.
+function LanguageSection({ settings }: { settings: AppSettings }) {
+  const [languageChanged, setLanguageChanged] = useState(false)
+
+  const choose = (language: LanguageChoice) => {
+    setLanguageChanged(language !== settings.language)
+    void writeSettings({ language })
+  }
+
+  return (
+    <Group title={L('Language')}>
+      <Row
+        label={L('Language')}
+        control={
+          <Select
+            ariaLabel={L('Language')}
+            value={settings.language}
+            options={[
+              { id: 'system' as LanguageChoice, label: L('System') },
+              { id: 'en' as LanguageChoice, label: 'English' },
+              { id: 'zh-Hans' as LanguageChoice, label: '简体中文' },
+            ]}
+            onChange={choose}
+          />
+        }
+      />
+      {languageChanged ? (
+        <Note>
+          {L('Relaunch to apply.')}{' '}
+          <button type="button" className="consent-link" onClick={() => { invoke('relaunch_app').catch(() => {}) }}>
+            {L('Relaunch')}
+          </button>
+        </Note>
+      ) : (
+        <Note>{L('Follows the Windows UI language unless you pick one here.')}</Note>
+      )}
+    </Group>
   )
 }
 
@@ -258,7 +313,7 @@ function TelemetrySection() {
   // recorded or sent until it is answered.
   if (!status.onboarded && !fromDesktop) {
     return (
-      <Group title="Privacy">
+      <Group title={L('Privacy')}>
         <TelemetryNotice onDecided={setStatus} />
       </Group>
     )
@@ -269,13 +324,13 @@ function TelemetrySection() {
   }
 
   return (
-    <Group title="Privacy">
+    <Group title={L('Privacy')}>
       <Row
-        label="Anonymous telemetry"
-        hint="Which parts of the app get opened, how the Capacity Dock is used, and errors. The daily report includes the names of the models, tools, skills and MCP servers you use alongside the bucketed counts. Never your prompts, your code, or your project and file names."
+        label={L('Anonymous telemetry')}
+        hint={L('Which parts of the app get opened, how the Capacity Dock is used, and errors. The daily report includes the names of the models, tools, skills and MCP servers you use alongside the bucketed counts. Never your prompts, your code, or your project and file names.')}
         control={
           <Switch
-            ariaLabel="Anonymous telemetry"
+            ariaLabel={L('Anonymous telemetry')}
             on={status.enabled}
             disabled={fromDesktop}
             onToggle={toggle}
@@ -284,13 +339,12 @@ function TelemetrySection() {
       />
       <Note>
         {fromDesktop ? (
-          "This is the CodeBurn desktop app's setting and it covers both apps. Change it there, under Privacy and data."
+          L("This is the CodeBurn desktop app's setting and it covers both apps. Change it there, under Privacy and data.")
         ) : (
           <>
-            Switching this off gives this install a new anonymous id, so nothing recorded
-            before can be tied to anything after.{' '}
+            {L('Switching this off gives this install a new anonymous id, so nothing recorded before can be tied to anything after.')}{' '}
             <button type="button" className="consent-link" onClick={() => { void openUrl(TELEMETRY_DOCS_URL) }}>
-              What data we collect
+              {L('What data we collect')}
             </button>
           </>
         )}
@@ -339,15 +393,15 @@ function CapacityDockSection({ quota }: { quota: QuotaState }) {
   return (
     <Group
       id="stg-dock"
-      title="Capacity Dock"
-      footer="Connected providers, and anything already in the dock, appear here, so a provider can always be removed even after its connection fails."
+      title={L('Capacity Dock')}
+      footer={L('Connected providers, and anything already in the dock, appear here, so a provider can always be removed even after its connection fails.')}
     >
       <Row
-        label="Show Capacity Dock"
-        hint="A slim quota rail docked to a screen edge."
+        label={L('Show Capacity Dock')}
+        hint={L('A slim quota rail docked to a screen edge.')}
         control={
           <Switch
-            ariaLabel="Show Capacity Dock"
+            ariaLabel={L('Show Capacity Dock')}
             on={prefs.enabled}
             onToggle={() => apply({ enabled: !prefs.enabled })}
           />
@@ -355,11 +409,11 @@ function CapacityDockSection({ quota }: { quota: QuotaState }) {
       />
       {restable.length > 0 && (
         <Row
-          label="Resting provider"
-          hint="The one the rail shows before you hover it."
+          label={L('Resting provider')}
+          hint={L('The one the rail shows before you hover it.')}
           control={
             <Select
-              ariaLabel="Resting provider"
+              ariaLabel={L('Resting provider')}
               value={resting}
               options={restable.map(id => ({ id, label: nameOf(id) }))}
               onChange={preferred => apply({ preferred })}
@@ -368,11 +422,11 @@ function CapacityDockSection({ quota }: { quota: QuotaState }) {
         />
       )}
       <Row
-        label="Size"
+        label={L('Size')}
         control={
           <>
             <Slider
-              ariaLabel="Capacity Dock size"
+              ariaLabel={L('Capacity Dock size')}
               value={prefs.scale}
               min={DOCK_SCALE_MIN}
               max={DOCK_SCALE_MAX}
@@ -384,29 +438,29 @@ function CapacityDockSection({ quota }: { quota: QuotaState }) {
         }
       />
       <Row
-        label="Appearance"
+        label={L('Appearance')}
         control={
           <Select
-            ariaLabel="Capacity Dock appearance"
+            ariaLabel={L('Capacity Dock appearance')}
             value={prefs.theme}
-            options={DOCK_THEMES}
+            options={DOCK_THEMES.map(t => ({ id: t.id, label: t.label() }))}
             onChange={theme => apply({ theme })}
           />
         }
       />
       <Row
-        label="Gauge shape"
+        label={L('Gauge shape')}
         control={
           <Select
-            ariaLabel="Capacity Dock gauge shape"
+            ariaLabel={L('Capacity Dock gauge shape')}
             value={prefs.gaugeShape}
-            options={DOCK_GAUGE_SHAPES}
+            options={DOCK_GAUGE_SHAPES.map(s => ({ id: s.id, label: s.label() }))}
             onChange={gaugeShape => apply({ gaugeShape })}
           />
         }
       />
       {manageable.length === 0 ? (
-        <Note>Connect a provider from its page in the sidebar to make it available here.</Note>
+        <Note>{L('Connect a provider from its page in the sidebar to make it available here.')}</Note>
       ) : (
         manageable.map(id => {
           const on = prefs.providers.length > 0 ? prefs.providers.includes(id) : isConnected(id)
@@ -417,7 +471,7 @@ function CapacityDockSection({ quota }: { quota: QuotaState }) {
                 <span className="stg-provider">
                   <ProviderGlyph id={id} size={14} />
                   <span>{nameOf(id)}</span>
-                  {!isConnected(id) && <span className="stg-attention">Needs attention</span>}
+                  {!isConnected(id) && <span className="stg-attention">{L('Needs attention')}</span>}
                 </span>
               }
               control={
@@ -451,24 +505,23 @@ function TerminalSection({ settings }: { settings: AppSettings }) {
   if (installed === null || Object.keys(installed).length === 0) return null
 
   return (
-    <Group title="Terminal">
+    <Group title={L('Terminal')}>
       <Row
-        label="Open commands in"
+        label={L('Open commands in')}
         control={
           <Select
-            ariaLabel="Terminal"
+            ariaLabel={L('Terminal')}
             value={settings.terminal}
             options={TERMINALS.map(term => ({
               id: term.id,
-              label: installed[term.id] === false ? `${term.label} (not installed)` : term.label,
+              label: installed[term.id] === false ? Lf('%@ (not installed)', term.label()) : term.label(),
             }))}
             onChange={terminal => writeSettings({ terminal })}
           />
         }
       />
       <Note>
-        Where Full Report and Optimize open. If the chosen console is not installed, CodeBurn
-        falls back to the Command Prompt, which always is.
+        {L('Where Full Report and Optimize open. If the chosen console is not installed, CodeBurn falls back to the Command Prompt, which always is.')}
       </Note>
     </Group>
   )
@@ -538,26 +591,28 @@ function AlertsSection({ settings, currency }: { settings: AppSettings; currency
   }
 
   const label = (value: number) => {
-    if (value === 0) return 'Off'
+    if (value === 0) return L('Off')
     return isTokens ? `${trim(value / 1e6)}M` : `${currency.symbol}${trim(value)}`
   }
 
   const armed = stored !== null && stored > 0
   const help = custom && !armed
-    ? 'Enter an amount above, or the alert stays off.'
-    : `The tray flame turns yellow when today's ${isTokens ? 'tokens pass' : 'cost passes'} the daily budget.`
+    ? L('Enter an amount above, or the alert stays off.')
+    : isTokens
+      ? L("The tray flame turns yellow when today's tokens pass the daily budget.")
+      : L("The tray flame turns yellow when today's cost passes the daily budget.")
 
   return (
-    <Group title="Alerts">
+    <Group title={L('Alerts')}>
       <Row
-        label="Daily budget"
+        label={L('Daily budget')}
         control={
           <Select
-            ariaLabel="Daily budget"
+            ariaLabel={L('Daily budget')}
             value={custom ? CUSTOM : stored ?? 0}
             options={[
               ...presets.map(value => ({ id: value, label: label(value) })),
-              { id: CUSTOM, label: 'Custom...' },
+              { id: CUSTOM, label: L('Custom…') },
             ]}
             onChange={choose}
           />
@@ -565,11 +620,11 @@ function AlertsSection({ settings, currency }: { settings: AppSettings; currency
       />
       {custom && (
         <Row
-          label={isTokens ? 'Millions of tokens' : `Amount in ${currency.code}`}
+          label={isTokens ? L('Millions of tokens') : Lf('Amount in %@', currency.code)}
           control={
             <Field
-              ariaLabel="Custom daily budget"
-              placeholder="Amount"
+              ariaLabel={L('Custom daily budget')}
+              placeholder={L('Amount')}
               value={draft}
               onChange={applyDraft}
               width={110}

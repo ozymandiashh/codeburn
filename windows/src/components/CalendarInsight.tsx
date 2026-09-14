@@ -3,6 +3,7 @@ import type { DailyEntry } from '../lib/payload'
 import type { CurrencyState } from '../lib/currency'
 import { formatCompactCurrency, formatCurrency, formatTokens } from '../lib/currency'
 import { addDays, formatDateKey, monthDay, prettyDate, startOfDay } from '../lib/dates'
+import { L, Lf } from '../lib/i18n'
 
 /// Port of ContributionHeatmapInsight in mac/.../Views/HeatmapSection.swift: a GitHub-style
 /// grid of the last N weeks, one column per week, Monday at the top. The week count is
@@ -109,7 +110,10 @@ export function computeStats(weeks: Week[]): Stats {
   }
 }
 
-const WEEKDAY_LABELS = ['Mon', '', 'Wed', '', 'Fri', '', 'Sun']
+/// Monday-first weekday labels with the blanks the grid spacing needs; these
+/// are the glossary's own weekday keys, so Chinese shows the same single
+/// glyphs (一三五日) the mac's calendar does.
+const WEEKDAY_LABELS = () => [L('Mon'), '', L('Wed'), '', L('Fri'), '', L('Sun')]
 
 export function CalendarInsight({ days, currency }: { days: DailyEntry[]; currency: CurrencyState }) {
   const grid = useRef<HTMLDivElement>(null)
@@ -137,19 +141,19 @@ export function CalendarInsight({ days, currency }: { days: DailyEntry[]; curren
     <div className="calendar-insight" ref={grid}>
       <div className="insight-header">
         <div>
-          <div className="insight-sublabel">Daily activity</div>
+          <div className="insight-sublabel">{L('Daily activity')}</div>
           <div className="insight-hero">{formatCurrency(stats.total, currency)}</div>
         </div>
-        <div className="heat-active">{stats.activeDays} active days</div>
+        <div className="heat-active">{Lf('%lld active days', stats.activeDays)}</div>
       </div>
 
       <div className="heat-body">
         <div className="heat-weekdays">
-          {WEEKDAY_LABELS.map((label, i) => <span key={i}>{label}</span>)}
+          {WEEKDAY_LABELS().map((label, i) => <span key={i}>{label}</span>)}
         </div>
         {/* The cells are painted squares, so the day each one stands for lives in its
             label. A bare span carries no role for that label to attach to, hence role="img". */}
-        <div className="heat-weeks" role="group" aria-label="Daily spend" onMouseLeave={() => setHovered(null)}>
+        <div className="heat-weeks" role="group" aria-label={L('Daily spend')} onMouseLeave={() => setHovered(null)}>
           {weeks.map(week => (
             <div key={week.start} className="heat-week">
               {week.days.map(day => (
@@ -169,15 +173,15 @@ export function CalendarInsight({ days, currency }: { days: DailyEntry[]; curren
 
       <div className="heat-detail">
         <div className="heat-detail-main">
-          <div className="heat-detail-label">{hoveredDay ? prettyDate(hoveredDay.date) : 'Daily detail'}</div>
+          <div className="heat-detail-label">{hoveredDay ? prettyDate(hoveredDay.date) : L('Daily detail')}</div>
           <div className="heat-detail-value">{detailValue(hoveredDay, currency)}</div>
         </div>
         <div className="heat-detail-metric">
-          <div className="heat-detail-label">Calls</div>
+          <div className="heat-detail-label">{L('Calls')}</div>
           <div className="heat-detail-num">{hoveredDay && !hoveredDay.isFuture ? hoveredDay.calls : '-'}</div>
         </div>
         <div className="heat-detail-metric">
-          <div className="heat-detail-label">Tokens</div>
+          <div className="heat-detail-label">{L('Tokens')}</div>
           <div className="heat-detail-num">
             {hoveredDay && !hoveredDay.isFuture ? formatTokens(hoveredDay.tokens) : '-'}
           </div>
@@ -186,18 +190,18 @@ export function CalendarInsight({ days, currency }: { days: DailyEntry[]; curren
 
       <div className="mini-stats">
         <div className="mini-stat">
-          <div className="mini-stat-label">Peak day</div>
+          <div className="mini-stat-label">{L('Peak day')}</div>
           <div className="mini-stat-value">
-            {stats.peak ? `${formatCompactCurrency(stats.peak.cost, currency)} on ${monthDay(stats.peak.date)}` : '-'}
+            {stats.peak ? Lf('%@ on %@', formatCompactCurrency(stats.peak.cost, currency), monthDay(stats.peak.date)) : '-'}
           </div>
         </div>
         <div className="mini-stat">
-          <div className="mini-stat-label">Avg active</div>
+          <div className="mini-stat-label">{L('Avg active')}</div>
           <div className="mini-stat-value">{formatCompactCurrency(stats.avgActive, currency)}</div>
         </div>
         <div className="mini-stat">
-          <div className="mini-stat-label">Streak</div>
-          <div className="mini-stat-value">{stats.streak}d</div>
+          <div className="mini-stat-label">{L('Streak')}</div>
+          <div className="mini-stat-value">{Lf('%lldd', stats.streak)}</div>
         </div>
       </div>
     </div>
@@ -215,14 +219,20 @@ function cellClass(day: Day, isHovered: boolean): string {
 }
 
 function detailValue(day: Day | null, currency: CurrencyState): string {
-  if (!day) return 'Hover a day'
-  if (day.isFuture) return 'Future day'
-  if (day.cost <= 0 && day.calls === 0) return 'No tracked usage'
+  if (!day) return L('Hover a day')
+  if (day.isFuture) return L('Future day')
+  if (day.cost <= 0 && day.calls === 0) return L('No tracked usage')
   return formatCompactCurrency(day.cost, currency)
 }
 
 function helpText(day: Day, currency: CurrencyState): string {
-  if (day.isFuture) return `${prettyDate(day.date)}: future day`
-  if (day.cost <= 0 && day.calls === 0) return `${prettyDate(day.date)}: no tracked usage`
-  return `${prettyDate(day.date)}: ${formatCompactCurrency(day.cost, currency)}, ${day.calls} calls, ${formatTokens(day.tokens)} tokens`
+  if (day.isFuture) return Lf('%@: future day', prettyDate(day.date))
+  if (day.cost <= 0 && day.calls === 0) return Lf('%@: no tracked usage', prettyDate(day.date))
+  return Lf(
+    '%@: %@, %lld calls, %@ tokens',
+    prettyDate(day.date),
+    formatCompactCurrency(day.cost, currency),
+    day.calls,
+    formatTokens(day.tokens),
+  )
 }

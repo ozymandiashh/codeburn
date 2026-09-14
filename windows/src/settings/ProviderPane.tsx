@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { ACCEPTS_KEY, refreshQuota, summaryFor, type Connection, type QuotaState } from '../lib/quota'
 import { QUOTA_CADENCES, subscribeSettings, writeSettings, type AppSettings } from '../lib/appSettings'
 import { homePath } from '../lib/platform'
+import { L, Lf } from '../lib/i18n'
 import { Field, Group, Note, Pane, Row, Select } from './controls'
 import { CheckCircleIcon, KeySlashIcon, RetryIcon, WarningIcon, XIcon } from '../components/Icons'
 
@@ -16,33 +17,40 @@ import { CheckCircleIcon, KeySlashIcon, RetryIcon, WarningIcon, XIcon } from '..
 /// Retry here, plus the instruction that says where the credential is supposed to come from.
 
 /// ProviderConnectionGuidance.instruction, resolved per provider rather than from a catalog
-/// of auth methods this app does not carry.
-const GUIDANCE: Record<string, string> = {
-  claude: 'Sign in to Claude Code (run `claude` and type /login), then click Retry.',
-  codex: 'Run `codex login` and choose a ChatGPT plan, then click Retry.',
-  gemini: 'Run the Gemini CLI once to sign in, then click Retry.',
-  copilot: 'Sign in with the Copilot CLI or an editor Copilot plugin, then click Retry.',
-  antigravity: 'Start the Antigravity app, then click Retry.',
-  kimi: 'Sign in with the Kimi CLI, then click Retry.',
-  cursor: 'Sign in to the Cursor app, then click Retry.',
-  zai: 'Sign in with the Pi CLI, or set ZAI_API_KEY, then click Retry.',
-  grok: 'Sign in with the Grok CLI, then click Retry.',
-  clinepass: 'Set CLINEPASS_API_KEY, then click Retry.',
+/// of auth methods this app does not carry. These are Windows-specific sentences; their
+/// vocabulary follows the menubar glossary's provider guidance (服务商, 命令行工具, 重试).
+/// Built per call, not at module load, so they follow the resolved UI language.
+function guidance(): Record<string, string> {
+  return {
+    claude: L('Sign in to Claude Code (run `claude` and type /login), then click Retry.'),
+    codex: L('Run `codex login` and choose a ChatGPT plan, then click Retry.'),
+    gemini: L('Run the Gemini CLI once to sign in, then click Retry.'),
+    copilot: L('Sign in with the Copilot CLI or an editor Copilot plugin, then click Retry.'),
+    antigravity: L('Start the Antigravity app, then click Retry.'),
+    kimi: L('Sign in with the Kimi CLI, then click Retry.'),
+    cursor: L('Sign in to the Cursor app, then click Retry.'),
+    zai: L('Sign in with the Pi CLI, or set ZAI_API_KEY, then click Retry.'),
+    grok: L('Sign in with the Grok CLI, then click Retry.'),
+    clinepass: L('Set CLINEPASS_API_KEY, then click Retry.'),
+  }
 }
 
 /// The mac's "How it works" sections, with the Windows paths. Every one of these is
-/// read-only: nothing is copied into a store of CodeBurn's own.
-const HOW_IT_WORKS: Record<string, string> = {
-  claude: 'Claude quota is read from the Claude Code credentials already on this machine, then checked against Anthropic. Only the plan and the rate-limit windows come back; no conversation content is read.',
-  codex: 'Codex quota follows the authoritative %USERPROFILE%\\.codex\\auth.json session directly. Only ChatGPT-mode auth (Plus, Pro, Team, Business, Edu, Enterprise) reports rate-limit windows; API-key users are billed per request and have a different reporting surface. Credit-metered workspaces report their monthly credit allowance instead.',
-  gemini: 'Gemini quota reads %USERPROFILE%\\.gemini\\oauth_creds.json read-only and asks Google Code Assist. Tokens stay in memory. If it shows as expired, run the Gemini CLI once to refresh your login, then click Retry.',
-  copilot: 'Copilot quota reads a GitHub token that is already on this machine, read-only: the editor plugin files under %LOCALAPPDATA%\\github-copilot first, then the Copilot CLI files. Usage tracking works without any of this; only the live quota bars need a token.',
-  antigravity: 'Antigravity quota talks to the local Antigravity language server on 127.0.0.1 only. Nothing leaves the machine and no credential files are read. If it shows as disconnected, start the Antigravity app, then click Retry.',
-  kimi: 'Kimi Code quota reads %USERPROFILE%\\.kimi-code\\credentials\\kimi-code.json directly. Access tokens are short-lived and only the Kimi CLI refreshes them, so if the connection shows as expired, run the Kimi CLI once and click Retry.',
-  cursor: 'Cursor quota opens the Cursor editor state database read-only for its access token, then asks cursor.com. Nothing is written back, so an expired token can only be refreshed by signing in to Cursor again.',
-  zai: 'Z.ai quota uses a supplied API key if there is one, and otherwise the Z.ai login the Pi CLI keeps in %USERPROFILE%\\.pi\\agent\\auth.json.',
-  grok: 'Grok Build quota reads %USERPROFILE%\\.grok\\auth.json, preferring the current OIDC scope over an older sign-in entry.',
-  clinepass: 'ClinePass has no local login file, so the only credential is an API key.',
+/// read-only: nothing is copied into a store of CodeBurn's own. Also per call, for the
+/// same reason as `guidance()`.
+function howItWorks(): Record<string, string> {
+  return {
+    claude: L('Claude quota is read from the Claude Code credentials already on this machine, then checked against Anthropic. Only the plan and the rate-limit windows come back; no conversation content is read.'),
+    codex: L('Codex quota follows the authoritative %USERPROFILE%\\.codex\\auth.json session directly. Only ChatGPT-mode auth (Plus, Pro, Team, Business, Edu, Enterprise) reports rate-limit windows; API-key users are billed per request and have a different reporting surface. Credit-metered workspaces report their monthly credit allowance instead.'),
+    gemini: L('Gemini quota reads %USERPROFILE%\\.gemini\\oauth_creds.json read-only and asks Google Code Assist. Tokens stay in memory. If it shows as expired, run the Gemini CLI once to refresh your login, then click Retry.'),
+    copilot: L('Copilot quota reads a GitHub token that is already on this machine, read-only: the editor plugin files under %LOCALAPPDATA%\\github-copilot first, then the Copilot CLI files. Usage tracking works without any of this; only the live quota bars need a token.'),
+    antigravity: L('Antigravity quota talks to the local Antigravity language server on 127.0.0.1 only. Nothing leaves the machine and no credential files are read. If it shows as disconnected, start the Antigravity app, then click Retry.'),
+    kimi: L('Kimi Code quota reads %USERPROFILE%\\.kimi-code\\credentials\\kimi-code.json directly. Access tokens are short-lived and only the Kimi CLI refreshes them, so if the connection shows as expired, run the Kimi CLI once and click Retry.'),
+    cursor: L('Cursor quota opens the Cursor editor state database read-only for its access token, then asks cursor.com. Nothing is written back, so an expired token can only be refreshed by signing in to Cursor again.'),
+    zai: L('Z.ai quota uses a supplied API key if there is one, and otherwise the Z.ai login the Pi CLI keeps in %USERPROFILE%\\.pi\\agent\\auth.json.'),
+    grok: L('Grok Build quota reads %USERPROFILE%\\.grok\\auth.json, preferring the current OIDC scope over an older sign-in entry.'),
+    clinepass: L('ClinePass has no local login file, so the only credential is an API key.'),
+  }
 }
 
 type Props = {
@@ -54,30 +62,36 @@ type Props = {
 export function ProviderPane({ id, name, quota }: Props) {
   const summary = summaryFor(quota, id)
   const connection: Connection | null = summary?.connection ?? null
-  const guidance = GUIDANCE[id] ?? 'Sign in with the provider app or CLI, then click Retry.'
+  const guidanceFor = guidance()[id] ?? L('Sign in with the provider app or CLI, then click Retry.')
 
   const title =
-    connection === 'connected' ? 'Connected'
-      : connection === 'stale' ? 'Refreshing...'
-        : connection === 'loading' ? 'Connecting...'
-          : connection === 'transientFailure' ? 'Retrying'
-            : connection === 'terminalFailure' ? 'Reconnect required'
-              : 'Not connected'
+    connection === 'connected' ? L('Connected')
+      : connection === 'stale' ? L('Refreshing…')
+        : connection === 'loading' ? L('Connecting…')
+          : connection === 'transientFailure' ? L('Retrying')
+            : connection === 'terminalFailure' ? L('Reconnect required')
+              : L('Not connected')
 
   const detail =
     connection === 'connected' || connection === 'stale'
-      ? (summary?.planLabel ? `Plan: ${summary.planLabel}` : 'Live quota is available to the popover and the Capacity Dock.')
+      ? (summary?.planLabel ? Lf('Plan: %@', summary.planLabel) : L('Live quota is available to the popover and the Capacity Dock.'))
       : connection === 'transientFailure'
-        ? quota.error ?? 'The last refresh failed; the next one is already scheduled.'
+        ? quota.error ?? L('The last refresh failed; the next one is already scheduled.')
         : connection === 'terminalFailure'
-          ? [summary?.reason, guidance].filter(Boolean).join(' ')
+          ? [summary?.reason, guidanceFor].filter(Boolean).join(' ')
           : quota.providers.length === 0
-            ? 'Waiting for the first quota reading.'
-            : guidance
+            ? L('Waiting for the first quota reading.')
+            : guidanceFor
 
   return (
     <Pane>
-      <Group title="Connection" footer={`CodeBurn reads whatever credential ${name} already wrote on this machine. It never copies one into a store of its own.`}>
+      <Group
+        title={L('Connection')}
+        footer={Lf(
+          'CodeBurn reads whatever credential %@ already wrote on this machine. It never copies one into a store of its own.',
+          name,
+        )}
+      >
         <div className="stg-row">
           <div className="stg-conn">
             <span className={`stg-conn-icon stg-conn-${connection ?? 'disconnected'}`}>
@@ -98,7 +112,7 @@ export function ProviderPane({ id, name, quota }: Props) {
               disabled={quota.loading}
               onClick={() => { void refreshQuota() }}
             >
-              {quota.loading ? 'Checking...' : 'Retry'}
+              {quota.loading ? L('Checking…') : L('Retry')}
             </button>
           </div>
         </div>
@@ -115,8 +129,13 @@ export function ProviderPane({ id, name, quota }: Props) {
 
       <QuotaCadence />
 
-      <Group title="How it works">
-        <Note>{HOW_IT_WORKS[id] ?? `${name} quota comes from the codeburn CLI, which reads the credential the provider's own tools left on this machine.`}</Note>
+      <Group title={L('How it works')}>
+        <Note>
+          {howItWorks()[id] ?? Lf(
+            "%@ quota comes from the codeburn CLI, which reads the credential the provider's own tools left on this machine.",
+            name,
+          )}
+        </Note>
       </Group>
     </Pane>
   )
@@ -143,7 +162,7 @@ function ClaudeConfigDirs() {
 
   const add = async () => {
     const picked = await invoke<string | null>('pick_directory', {
-      title: 'Choose a Claude config directory (one containing a projects folder).',
+      title: L('Choose a Claude config directory (one containing a projects folder).'),
     }).catch(() => null)
     if (!picked || dirs.includes(picked)) return
     void apply([...dirs, picked])
@@ -151,11 +170,14 @@ function ClaudeConfigDirs() {
 
   return (
     <Group
-      title="Config Directories"
-      footer={`Aggregate usage across several Claude config directories, for instance work and personal accounts. Empty tracks just the default ${homePath('.claude')}. The CLAUDE_CONFIG_DIRS environment variable, when set, overrides this list.`}
+      title={L('Config Directories')}
+      footer={Lf(
+        'Aggregate usage across several Claude config directories, for instance work and personal accounts. Empty tracks just the default %@. The CLAUDE_CONFIG_DIRS environment variable, when set, overrides this list.',
+        homePath('.claude'),
+      )}
     >
       {dirs.length === 0 ? (
-        <Note>No extra directories. Tracking the default {homePath('.claude')}.</Note>
+        <Note>{Lf('No extra directories. Tracking the default %@.', homePath('.claude'))}</Note>
       ) : (
         dirs.map((dir, index) => (
           <Row
@@ -165,8 +187,8 @@ function ClaudeConfigDirs() {
               <button
                 type="button"
                 className="btn btn-icon"
-                title="Remove"
-                aria-label={`Remove ${dir}`}
+                title={L('Remove')}
+                aria-label={Lf('Remove %@', dir)}
                 onClick={() => apply(dirs.filter((_, i) => i !== index))}
               >
                 <XIcon size={11} />
@@ -176,7 +198,7 @@ function ClaudeConfigDirs() {
         ))
       )}
       {error && <Note><span className="stg-error">{error}</span></Note>}
-      <Row control={<button type="button" className="btn" onClick={add}>Add Directory...</button>} />
+      <Row control={<button type="button" className="btn" onClick={add}>{L('Add Directory…')}</button>} />
     </Group>
   )
 }
@@ -213,27 +235,27 @@ function ProviderKey({ id, name }: { id: string; name: string }) {
 
   return (
     <Group
-      title="API key"
-      footer="On Windows the key is encrypted for this account with DPAPI, so the file is worthless on another machine or under another sign-in; on Linux it sits in a file only your user can read. It is passed to the codeburn CLI as an environment variable and is never written to a command line or a log."
+      title={L('API key')}
+      footer={L('On Windows the key is encrypted for this account with DPAPI, so the file is worthless on another machine or under another sign-in; on Linux it sits in a file only your user can read. It is passed to the codeburn CLI as an environment variable and is never written to a command line or a log.')}
     >
       <Row
-        label={has ? 'A key is stored' : 'No key stored'}
-        hint={has ? `${name} quota is read with the key saved on this machine.` : `Paste a ${name} API key to read live quota.`}
+        label={has ? L('A key is stored') : L('No key stored')}
+        hint={has ? Lf('%@ quota is read with the key saved on this machine.', name) : Lf('Paste a %@ API key to read live quota.', name)}
         control={
           <button type="button" className="btn" disabled={!has || busy} onClick={() => save('')}>
-            Clear
+            {L('Clear')}
           </button>
         }
       />
       <Row
         stacked
-        label="Paste a key"
+        label={L('Paste a key')}
         control={
           <>
             <Field
               secure
-              ariaLabel={`${name} API key`}
-              placeholder={has ? 'Replace the stored key' : 'API key'}
+              ariaLabel={Lf('%@ API key', name)}
+              placeholder={has ? L('Replace the stored key') : L('API key')}
               value={draft}
               onChange={setDraft}
               width={280}
@@ -244,7 +266,7 @@ function ProviderKey({ id, name }: { id: string; name: string }) {
               disabled={busy || draft.trim().length === 0}
               onClick={() => save(draft)}
             >
-              Save and Connect
+              {L('Save and Connect')}
             </button>
           </>
         }
@@ -262,22 +284,20 @@ function QuotaCadence() {
   if (!settings) return null
 
   return (
-    <Group title="Quota Refresh">
+    <Group title={L('Quota Refresh')}>
       <Row
-        label="Update every"
+        label={L('Update every')}
         control={
           <Select
-            ariaLabel="Quota refresh cadence"
+            ariaLabel={L('Quota refresh cadence')}
             value={settings.quotaCadenceSeconds}
-            options={QUOTA_CADENCES}
+            options={QUOTA_CADENCES.map(c => ({ id: c.id, label: c.label() }))}
             onChange={quotaCadenceSeconds => writeSettings({ quotaCadenceSeconds })}
           />
         }
       />
       <Note>
-        Providers rate-limit these endpoints per account, and one run answers for all of them,
-        so this cadence covers every provider. Manual only refreshes when you open the popover
-        or press Retry.
+        {L('Providers rate-limit these endpoints per account, and one run answers for all of them, so this cadence covers every provider. Manual only refreshes when you open the popover or press Retry.')}
       </Note>
     </Group>
   )

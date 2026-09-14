@@ -9,6 +9,7 @@
 /// resolves several roots is named by the one a reader can act on.
 
 import { appDataPath, homePath } from './platform'
+import { Lf } from './i18n'
 
 export type WatchedTool = {
   /// The CLI provider id, which is also what `--provider` takes.
@@ -29,7 +30,8 @@ export const WATCHED_TOOLS: WatchedTool[] = [
   { id: 'pi', label: 'Pi', tool: 'Pi', path: homePath('.pi', 'agent', 'sessions') },
 ]
 
-/// The phrase both surfaces put after "CodeBurn watches".
+/// The phrase both surfaces put after "CodeBurn watches". Tool names and paths
+/// stay in their own spelling; only the sentence around them translates.
 export function watchedSource(tool: WatchedTool): string {
-  return `${tool.tool} sessions in ${tool.path}`
+  return Lf('%@ sessions in %@', tool.tool, tool.path)
 }

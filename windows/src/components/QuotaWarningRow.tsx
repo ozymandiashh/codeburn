@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react'
 import { quotaWarnings, severity, type QuotaState, type Severity } from '../lib/quota'
+import { Lf } from '../lib/i18n'
 import { ExclamationCircleIcon, InfoCircleIcon, OctagonIcon, WarningIcon } from './Icons'
 
 /// Port of QuotaWarningRow in mac/Sources/CodeBurnMenubar/Views/MenuBarContent.swift. Lists
@@ -28,11 +29,15 @@ export function QuotaWarningRow({ quota }: { quota: QuotaState }) {
 }
 
 function message(warnings: Array<{ name: string; percent: number }>, tone: Severity): string {
+  // Provider names and percentages carry nothing to translate; only the sentences
+  // around them are catalog keys.
   const parts = warnings.map(w => `${w.name} ${Math.round(w.percent)}%`)
   if (parts.length === 1) {
     // Reads "Claude over limit (105%)" rather than the awkward "Claude 105% of quota used".
-    if (tone === 'danger') return `${warnings[0].name} over limit (${Math.round(warnings[0].percent)}%)`
-    return `${parts[0]} of quota used`
+    if (tone === 'danger') {
+      return Lf('%@ over limit (%lld%%)', warnings[0].name, Math.round(warnings[0].percent))
+    }
+    return Lf('%@ of quota used', parts[0])
   }
   return parts.join(' · ')
 }

@@ -3,10 +3,13 @@
 /// shades the popover paints with, which map one to one onto the CSS tokens in styles.css.
 
 import { readSetting, writeSetting } from './settings'
+import { L } from './i18n'
 
 export type AccentPreset = {
   id: string
-  label: string
+  /// The glossary's name for the preset, resolved at display so it follows the
+  /// UI language (the module loads before the language is resolved).
+  label: () => string
   base: string
   light: string
   deep: string
@@ -14,15 +17,15 @@ export type AccentPreset = {
 }
 
 export const ACCENT_PRESETS: AccentPreset[] = [
-  { id: 'ember', label: 'Ember', base: '#C9521D', light: '#E8774A', deep: '#8B3E13', glow: '#F0A070' },
-  { id: 'blue', label: 'Blue', base: '#0A84FF', light: '#409CFF', deep: '#0652B3', glow: '#80C0FF' },
-  { id: 'purple', label: 'Purple', base: '#BF5AF2', light: '#DA8FF7', deep: '#7C38A8', glow: '#E0B8FA' },
-  { id: 'pink', label: 'Pink', base: '#FF375F', light: '#FF6E8C', deep: '#B32642', glow: '#FF99B0' },
-  { id: 'red', label: 'Red', base: '#FF453A', light: '#FF6E63', deep: '#B33028', glow: '#FF9990' },
-  { id: 'orange', label: 'Orange', base: '#FF9F0A', light: '#FFBD4A', deep: '#B36F06', glow: '#FFD080' },
-  { id: 'yellow', label: 'Yellow', base: '#FFD60A', light: '#FFE04A', deep: '#B39606', glow: '#FFEA80' },
-  { id: 'green', label: 'Green', base: '#30D158', light: '#5AE078', deep: '#20923D', glow: '#80F098' },
-  { id: 'graphite', label: 'Graphite', base: '#98989D', light: '#AEAEB2', deep: '#5E5E62', glow: '#C8C8CC' },
+  { id: 'ember', label: () => L('Ember'), base: '#C9521D', light: '#E8774A', deep: '#8B3E13', glow: '#F0A070' },
+  { id: 'blue', label: () => L('Blue'), base: '#0A84FF', light: '#409CFF', deep: '#0652B3', glow: '#80C0FF' },
+  { id: 'purple', label: () => L('Purple'), base: '#BF5AF2', light: '#DA8FF7', deep: '#7C38A8', glow: '#E0B8FA' },
+  { id: 'pink', label: () => L('Pink'), base: '#FF375F', light: '#FF6E8C', deep: '#B32642', glow: '#FF99B0' },
+  { id: 'red', label: () => L('Red'), base: '#FF453A', light: '#FF6E63', deep: '#B33028', glow: '#FF9990' },
+  { id: 'orange', label: () => L('Orange'), base: '#FF9F0A', light: '#FFBD4A', deep: '#B36F06', glow: '#FFD080' },
+  { id: 'yellow', label: () => L('Yellow'), base: '#FFD60A', light: '#FFE04A', deep: '#B39606', glow: '#FFEA80' },
+  { id: 'green', label: () => L('Green'), base: '#30D158', light: '#5AE078', deep: '#20923D', glow: '#80F098' },
+  { id: 'graphite', label: () => L('Graphite'), base: '#98989D', light: '#AEAEB2', deep: '#5E5E62', glow: '#C8C8CC' },
 ]
 
 export const DEFAULT_ACCENT = ACCENT_PRESETS[0]

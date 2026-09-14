@@ -71,6 +71,7 @@ import {
   type Severity,
 } from './dockGeometry'
 import { track } from './lib/telemetry'
+import { L, Lf } from './lib/i18n'
 import './dock.css'
 
 const PROVIDER_NAMES: Record<string, string> = {
@@ -246,7 +247,7 @@ function Row({ m, shape, provider, loading, style, onEnter, onLeave, onClick }: 
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
       onClick={onClick}
-      aria-label={`${provider.name} usage`}
+      aria-label={Lf('%@ usage', provider.name)}
     >
       <span className="dock-gauge">
         <Ring m={m} shape={shape} percent={percent} />
@@ -262,6 +263,7 @@ function Row({ m, shape, provider, loading, style, onEnter, onLeave, onClick }: 
 
 /// CapacityDockConnectionAction.resolve: the one recovery the bubble offers. A provider the
 /// CLI could not read at all needs connecting; one it read and was refused needs reconnecting.
+/// Both names, and the Add API Key variant below, are glossary keys.
 function connectionAction(provider: Provider): 'Connect' | 'Reconnect' | null {
   if (provider.available) return null
   return provider.error ? 'Reconnect' : 'Connect'
@@ -270,15 +272,15 @@ function connectionAction(provider: Provider): 'Connect' | 'Reconnect' | null {
 /// The mac says "Add API Key" where the provider's only credential is a token. Here that is
 /// the same two providers whose settings pane offers a paste field.
 function actionTitle(provider: Provider, action: 'Connect' | 'Reconnect'): string {
-  return ACCEPTS_KEY.includes(provider.id) ? 'Add API Key' : action
+  return ACCEPTS_KEY.includes(provider.id) ? L('Add API Key') : L(action)
 }
 
 function checkedLabel(fetchedAt: number, now: number): string {
   const minutes = Math.floor(Math.max(0, now - fetchedAt) / 60_000)
-  if (minutes < 1) return 'Checked just now'
-  if (minutes < 60) return `Checked ${minutes}m ago`
+  if (minutes < 1) return L('Checked just now')
+  if (minutes < 60) return Lf('Checked %lldm ago', minutes)
   const hours = Math.floor(minutes / 60)
-  return `Checked ${hours}h ${minutes % 60}m ago`
+  return Lf('Checked %lldh %lldm ago', hours, minutes % 60)
 }
 
 /// The mac's footer carries provider facts its own adapters return. The CLI's `quota` output
@@ -288,14 +290,17 @@ function footerLines(provider: Provider, fetchedAt: number | null, now: number):
   const lines: string[] = []
   if (fetchedAt !== null) lines.push(checkedLabel(fetchedAt, now))
   const hidden = provider.windows.length - MAX_WINDOW_COLUMNS
-  if (hidden > 0) lines.push(`${hidden} more window${hidden === 1 ? '' : 's'} not shown`)
+  if (hidden > 0) lines.push(Lf(hidden === 1 ? '%lld more window not shown' : '%lld more windows not shown', hidden))
   return visibleFooterLines(lines, provider.error ?? null).slice(0, 2)
 }
 
 function instruction(provider: Provider, quota: QuotaState): string {
-  if (quota.cliOutdated) return 'CLI update needed for live quota. Run npm install -g codeburn.'
+  if (quota.cliOutdated) return L('CLI update needed for live quota. Run npm install -g codeburn.')
   if (quota.error) return quota.error
-  return `Sign in with the ${provider.name} app or CLI. The dock checks again on the quota refresh cadence.`
+  return Lf(
+    'Sign in with the %@ app or CLI. The dock checks again on the quota refresh cadence.',
+    provider.name,
+  )
 }
 
 /// A percentage drawn as its own gauge (PercentGaugeText): the glyphs sit dim, and the
@@ -355,7 +360,7 @@ function SessionPill({ g, session, now }: { g: GlanceMetrics; session: LiveSessi
             lineHeight={g.pillTitleLine}
           />
           {remaining === null ? null : (
-            <span className="dock-pill-left">{compactTokens(remaining)} left</span>
+            <span className="dock-pill-left">{Lf('%@ left', compactTokens(remaining))}</span>
           )}
         </span>
       )}
@@ -410,20 +415,20 @@ function Detail({
         {provider.plan ? <span className="dock-glance-plan">{provider.plan}</span> : null}
       </header>
 
-      {connection === 'loading' ? <p className="dock-conn is-loading">Refreshing…</p> : null}
-      {connection === 'stale' ? <p className="dock-conn is-stale">Last known usage · refreshing</p> : null}
+      {connection === 'loading' ? <p className="dock-conn is-loading">{L('Refreshing…')}</p> : null}
+      {connection === 'stale' ? <p className="dock-conn is-stale">{L('Last known usage · refreshing')}</p> : null}
       {connection === 'transientFailure' ? (
-        <p className="dock-conn is-retrying">Last known usage · retrying</p>
+        <p className="dock-conn is-retrying">{L('Last known usage · retrying')}</p>
       ) : null}
       {connection === 'disconnected' ? (
         <div className="dock-conn-block is-disconnected">
-          <p className="dock-conn is-disconnected">Not connected</p>
+          <p className="dock-conn is-disconnected">{L('Not connected')}</p>
           <p className="dock-conn-instruction">{instruction(provider, quota)}</p>
         </div>
       ) : null}
       {connection === 'terminalFailure' ? (
         <div className="dock-conn-block is-failed">
-          <p className="dock-conn is-failed">Reconnect required</p>
+          <p className="dock-conn is-failed">{L('Reconnect required')}</p>
           <p className="dock-conn-reason">{provider.error}</p>
           <p className="dock-conn-hint">{instruction(provider, quota)}</p>
         </div>
@@ -432,7 +437,7 @@ function Detail({
       {sessions ? (
         <section className="dock-glance-block has-rule">
           <div className="dock-glance-caption">
-            <span>Sessions</span>
+            <span>{L('Sessions')}</span>
             <span className="dock-glance-caption-end">{runningLabel(sessions.length)}</span>
           </div>
           {sessions.length > 0 ? (
@@ -448,12 +453,12 @@ function Detail({
       {today ? (
         <section className="dock-glance-block has-rule">
           <div className="dock-glance-caption">
-            <span>Today</span>
+            <span>{L('Today')}</span>
           </div>
           <div className="dock-today">
             <span className="dock-today-figure">
               <span className="dock-today-cost">{usd(today.cost)}</span>
-              <span className="dock-today-burned">burned</span>
+              <span className="dock-today-burned">{L('burned')}</span>
             </span>
             <span className="dock-today-stack">
               <span className="dock-today-token">
@@ -464,7 +469,7 @@ function Detail({
                 <span className="dock-today-arrow">&uarr;</span>
                 {compactTokens(today.outputTokens)}
               </span>
-              <span className="dock-today-calls">{thousands(today.calls)} calls</span>
+              <span className="dock-today-calls">{Lf('%lld calls', thousands(today.calls))}</span>
             </span>
           </div>
         </section>
@@ -474,7 +479,9 @@ function Detail({
         <section className={`dock-glance-windows${footer.length > 0 ? ' has-rule' : ''}`}>
           {windows.length === 0 ? (
             <p className="dock-budget-line">
-              {budget && budget > 0 ? `today ${usd(today?.cost ?? 0)} of ${usd(budget)}` : 'no budget set'}
+              {budget && budget > 0
+                ? Lf('today %@ of %@', usd(today?.cost ?? 0), usd(budget))
+                : L('no budget set')}
             </p>
           ) : (
             <div className="dock-window-row" style={{ textAlign: windowAlign }}>

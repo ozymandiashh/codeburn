@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type WheelEvent } from 'react'
 import type { MenubarPayload } from '../lib/payload'
 import type { CurrencyState } from '../lib/currency'
-import { formatCompactCurrency, formatCurrency, plural } from '../lib/currency'
+import { formatCompactCurrency, formatCurrency } from '../lib/currency'
 import { severity, summaryFor, type QuotaState, type QuotaSummary } from '../lib/quota'
 import { WATCHED_TOOLS, watchedSource } from '../lib/watched'
+import { L, Lf } from '../lib/i18n'
 import { ChevronRight } from './Icons'
 import { QuotaPopover } from './QuotaPopover'
 
@@ -86,7 +87,7 @@ export function providerTabs(payload: MenubarPayload | null): ProviderTab[] {
     const sorted = [...active].sort((a, b) => (b.cost - a.cost) || a.label.localeCompare(b.label))
     const total = sorted.reduce((sum, d) => sum + d.cost, 0)
     return [
-      { id: ALL_PROVIDER, label: 'All', cost: total, detected: true, source: 'every detected tool' },
+      { id: ALL_PROVIDER, label: L('All'), cost: total, detected: true, source: L('every detected tool') },
       ...sorted.map(d => ({ id: d.id, label: d.label, cost: d.cost, detected: true, source: null })),
     ]
   }
@@ -100,7 +101,7 @@ export function providerTabs(payload: MenubarPayload | null): ProviderTab[] {
   }))
   const total = known.reduce((sum, t) => sum + t.cost, 0)
   return [
-    { id: ALL_PROVIDER, label: 'All', cost: total, detected: known.some(t => t.detected), source: 'every detected tool' },
+    { id: ALL_PROVIDER, label: L('All'), cost: total, detected: known.some(t => t.detected), source: L('every detected tool') },
     ...known,
   ]
 }
@@ -204,13 +205,13 @@ export function AgentTabStrip({ selected, onSelect, payload, currency, quota }: 
             type="button"
             className="tab-chevron"
             disabled={index <= 0}
-            aria-label="Show previous providers"
+            aria-label={L('Show previous providers')}
             onClick={() => step(-1)}
           >
             <ChevronRight size={11} style={{ transform: 'rotate(180deg)' }} />
           </button>
         )}
-        <nav className="agent-tabs" aria-label="Provider" ref={scroller} onWheel={onWheel}>
+        <nav className="agent-tabs" aria-label={L('Provider')} ref={scroller} onWheel={onWheel}>
           <div className="agent-tabs-content" ref={content}>
             {tabs.map(tab => {
               const active = selected === tab.id
@@ -249,7 +250,7 @@ export function AgentTabStrip({ selected, onSelect, payload, currency, quota }: 
             type="button"
             className="tab-chevron"
             disabled={index >= tabs.length - 1}
-            aria-label="Show next providers"
+            aria-label={L('Show next providers')}
             onClick={() => step(1)}
           >
             <ChevronRight size={11} />
@@ -301,18 +302,25 @@ function previewFor(id: Provider, tabs: ProviderTab[], currency: CurrencyState):
   const others = tabs.filter(t => t.id !== ALL_PROVIDER && t.detected)
   const total = tabs.find(t => t.id === ALL_PROVIDER)?.cost ?? 0
   if (id === ALL_PROVIDER) {
-    if (others.length === 0) return { title: 'No tools detected yet', body: 'Run one of the supported tools once, then refresh.' }
+    if (others.length === 0) {
+      return { title: L('No tools detected yet'), body: L('Run one of the supported tools once, then refresh.') }
+    }
     return {
-      title: `${formatCurrency(total, currency)} today across ${plural(others.length, 'tool')}`,
+      title: Lf('%@ today across %@', formatCurrency(total, currency), Lf(others.length === 1 ? '1 tool' : '%lld tools', others.length)),
       body: others.map(t => `${t.label} ${formatCompactCurrency(t.cost, currency)}`).join(' · '),
     }
   }
   if (!tab.detected) {
-    return { title: `${tab.label} not detected on this machine`, body: `CodeBurn watches ${tab.source ?? 'this tool'}.` }
+    return {
+      title: Lf('%@ not detected on this machine', tab.label),
+      body: Lf('CodeBurn watches %@.', tab.source ?? L('this tool')),
+    }
   }
   const share = total > 0 ? Math.round((tab.cost / total) * 100) : 0
   return {
-    title: `${tab.label} · ${formatCurrency(tab.cost, currency)} today`,
-    body: tab.cost > 0 ? `${share}% of today's spend · click to filter every view` : 'No spend yet today · click to filter every view',
+    title: Lf('%@ · %@ today', tab.label, formatCurrency(tab.cost, currency)),
+    body: tab.cost > 0
+      ? Lf("%lld%% of today's spend · click to filter every view", share)
+      : L('No spend yet today · click to filter every view'),
   }
 }
