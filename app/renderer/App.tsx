@@ -14,6 +14,7 @@ import { rangeLabel, TopBar } from './components/TopBar'
 import { Window } from './components/Window'
 import { clearPolledMemo, hasPolledMemo, polledMemoTimestamp, primePolledMemo, usePolled, usePolledInFlight } from './hooks/usePolled'
 import { readDailyBudget } from './lib/budget'
+import { LocaleContext, persistLocaleChoice, readLocaleChoice, resolveSystemLocale, setCurrentLocale, t, type Locale, type LocaleChoice } from './lib/i18n/index'
 import { formatCompact, formatUsd, setActiveCurrency } from './lib/format'
 import {
   EMPTY_FILTERS,
@@ -38,7 +39,7 @@ import { clearOverviewHeadlines, readOverviewHeadline, writeOverviewHeadline } f
 import { codeburn } from './lib/ipc'
 import { trackEvent } from './lib/track'
 import { isMacPlatform, isModifierChord, shortcutLabel } from './lib/platform'
-import { localDateKey, PERIOD_LABELS } from './lib/period'
+import { localDateKey, periodLabel } from './lib/period'
 import { generationAt } from './lib/generation'
 import { detectedProviders as detectedProviderList, providerLabel, readDisabledProviders, type DetectedProvider } from './lib/providers'
 import { reportMemoKey } from './lib/reportMemoKey'
@@ -137,18 +138,20 @@ export function usageSnapshotProps(payload: MenubarPayload, modelCategories?: Ma
   }
 }
 
-const SECTION_TITLES: Record<Section, string> = {
-  overview: 'Overview',
-  sessions: 'Sessions',
-  pullRequests: 'Pull requests',
-  spend: 'Spend',
-  optimize: 'Optimize',
-  models: 'Models',
-  compare: 'Compare',
-  periods: 'Compare periods',
-  plans: 'Plans',
-  settings: 'Settings',
-  plugins: 'Plugins',
+// Resolved at render time so a language switch repaints the titles in place.
+const sectionTitle = (section: Section): string => SECTION_TITLES[section]()
+const SECTION_TITLES: Record<Section, () => string> = {
+  overview: () => t('Overview'),
+  sessions: () => t('Sessions'),
+  pullRequests: () => t('Pull requests'),
+  spend: () => t('Spend'),
+  optimize: () => t('Optimize'),
+  models: () => t('Models'),
+  compare: () => t('Compare'),
+  periods: () => t('Compare periods'),
+  plans: () => t('Plans'),
+  settings: () => t('Settings'),
+  plugins: () => t('Plugins'),
 }
 
 const STANDARD_PERIODS: Period[] = ['today', 'week', '30days', 'month', 'all', 'lifetime']
@@ -252,22 +255,32 @@ function persistProjectFiltered(active: boolean): void {
 }
 
 export function refreshedLabel(lastSuccessAt: number | null, loading: boolean, now: number): string {
-  if (loading && lastSuccessAt === null) return 'refreshing…'
-  if (lastSuccessAt === null) return 'not refreshed yet'
+  if (loading && lastSuccessAt === null) return t('refreshing…')
+  if (lastSuccessAt === null) return t('not refreshed yet')
   const seconds = Math.max(0, Math.floor((now - lastSuccessAt) / 1000))
-  if (seconds < 1) return 'refreshed just now'
-  if (seconds < 60) return `refreshed ${seconds}s ago`
+  if (seconds < 1) return t('refreshed just now')
+  if (seconds < 60) return t('refreshed {n}s ago', { n: seconds })
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `refreshed ${minutes}m ago`
+  if (minutes < 60) return t('refreshed {n}m ago', { n: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `refreshed ${hours}h ago`
-  return `refreshed ${Math.floor(hours / 24)}d ago`
+  if (hours < 24) return t('refreshed {n}h ago', { n: hours })
+  return t('refreshed {n}d ago', { n: Math.floor(hours / 24) })
 }
 
 /** Provides the app-wide refresh cadence (read persisted at boot, applied live)
  *  so every usePolled below reads it as its default interval. */
 export function App() {
   const [refreshValue, setRefreshValue] = useState(readRefreshValue)
+  const [localeChoice, setLocaleChoiceState] = useState(readLocaleChoice)
+  const appLocale = (window as unknown as { codeburn?: { appLocale?: string } }).codeburn?.appLocale
+  const locale: Locale = localeChoice === 'system' ? resolveSystemLocale(appLocale) : localeChoice
+  // Keep the non-React formatters (formatUsd and friends) on the same locale
+  // the context renders with.
+  setCurrentLocale(locale)
+  const setLocaleChoice = useCallback((choice: LocaleChoice) => {
+    setLocaleChoiceState(choice)
+    persistLocaleChoice(choice)
+  }, [])
   const setValue = useCallback((value: string) => {
     setRefreshValue(value)
     persistRefreshValue(value)
@@ -278,7 +291,9 @@ export function App() {
   )
   return (
     <RefreshCadenceContext.Provider value={cadence}>
-      <AppMain />
+      <LocaleContext.Provider value={{ locale, choice: localeChoice, setChoice: setLocaleChoice }}>
+        <AppMain />
+      </LocaleContext.Provider>
     </RefreshCadenceContext.Provider>
   )
 }
@@ -865,8 +880,8 @@ function AppMain() {
   // Combined scope reports unfiltered all-device usage, so the caption reads
   // "Combined" in place of the (forced-'all') provider label.
   const scopeCaption = scope === 'combined'
-    ? `${customRange ? rangeLabel(customRange) : PERIOD_LABELS[period]} · Combined`
-    : `${customRange ? rangeLabel(customRange) : PERIOD_LABELS[period]} · ${activeProviderLabel}${activeConfigLabel ? ` · ${activeConfigLabel}` : ''}`
+    ? `${customRange ? rangeLabel(customRange) : periodLabel(period)} · Combined`
+    : `${customRange ? rangeLabel(customRange) : periodLabel(period)} · ${activeProviderLabel}${activeConfigLabel ? ` · ${activeConfigLabel}` : ''}`
   const refreshing = usePolledInFlight() || overview.switching || (!!headlineSnapshot && overview.loading)
   const selectedReportKeys = selectedReportMemoKeys(section, period, provider, customRange, activeOverviewKey)
   const selectedReportTimestamps = selectedReportKeys.map(polledMemoTimestamp)
@@ -910,7 +925,7 @@ function AppMain() {
         ) : (
           <>
             <TopBar
-              title={SECTION_TITLES[section]}
+              title={sectionTitle(section)}
               canBack={history.past.length > 0}
               canForward={history.future.length > 0}
               onBack={goBack}
@@ -950,7 +965,7 @@ function AppMain() {
               ) : section === 'periods' ? (
                 <PeriodCompare provider={provider} refreshToken={refreshToken} ready={ready} onInspectContribution={inspectContribution} />
               ) : (
-                <SectionPlaceholder title={SECTION_TITLES[section]} />
+                <SectionPlaceholder title={sectionTitle(section)} />
               )}
             </div>
           </>
@@ -959,9 +974,9 @@ function AppMain() {
         {section !== 'settings' && (
           <Hint
             items={[
-              { k: shortcutLabel('1-9'), label: 'Navigate' },
-              { k: shortcutLabel(','), label: 'Settings' },
-              { k: shortcutLabel('R'), label: 'Refresh' },
+              { k: shortcutLabel('1-9'), label: t('Navigate') },
+              { k: shortcutLabel(','), label: t('Settings') },
+              { k: shortcutLabel('R'), label: t('Refresh') },
             ]}
             right={<RefreshedAt lastSuccessAt={selectedLastSuccessAt} refreshing={refreshing} />}
           />
@@ -1030,14 +1045,14 @@ function IndexingBanner({ payload }: { payload: MenubarPayload | null }) {
   if (payload?.stale) {
     return (
       <div role="status" className="stale-banner">
-        Some sources could not be refreshed. Showing indexed data; recent activity may be missing.
+        {t('Some sources could not be refreshed. Showing indexed data; recent activity may be missing.')}
       </div>
     )
   }
   if (!hydration || hydration.complete || hydration.indexedFiles >= hydration.totalFiles) return null
   return (
     <div role="status" className="stale-banner">
-      Indexing history · {Math.min(hydration.indexedFiles, hydration.totalFiles)}/{hydration.totalFiles} files · You can keep using CodeBurn; totals update as indexing completes.
+      {t('Indexing history · {a}/{b} files · You can keep using CodeBurn; totals update as indexing completes.', { a: Math.min(hydration.indexedFiles, hydration.totalFiles), b: hydration.totalFiles })}
     </div>
   )
 }

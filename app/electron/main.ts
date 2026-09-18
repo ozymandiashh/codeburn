@@ -1012,6 +1012,7 @@ function bootstrap(): void {
     void companion.bootstrap().catch(err => console.error('menubar bootstrap failed:', err))
     registerHandlers()
     installApplicationMenu()
+    process.env.__CODEBURN_APP_LOCALE__ = app.getLocale()
     createWindow()
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -1031,4 +1032,6 @@ function bootstrap(): void {
   })
 }
 
+// Seed the preload-readable app locale before any window loads. app.getLocale()
+// needs the ready state, so this runs inside bootstrap's whenReady.
 if (!process.env.VITEST) bootstrap()

@@ -1,5 +1,7 @@
 /// Display copy for period session counts. Keep in lockstep with
 /// `src/session-count-label.ts` (renderer does not import `src/`).
+import { currentLocaleTag } from './i18n/index'
+
 export type SessionCountBasis = 'identity' | 'partial'
 
 export const SESSION_COUNT_HELP = 'Older session logs may be unavailable.'
@@ -16,10 +18,10 @@ export function formatSessionCount(
 ): string {
   if (!sessionCountIsExact(basis)) {
     if (sessions <= 0) return 'Session count unavailable'
-    return sessions === 1 ? 'At least 1 session' : `At least ${sessions.toLocaleString('en-US')} sessions`
+    return sessions === 1 ? 'At least 1 session' : `At least ${sessions.toLocaleString(currentLocaleTag())} sessions`
   }
   if (sessions === 1) return '1 session'
-  return `${sessions.toLocaleString('en-US')} sessions`
+  return `${sessions.toLocaleString(currentLocaleTag())} sessions`
 }
 
 export function formatCombinedSessionCount(): string {

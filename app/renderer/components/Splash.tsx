@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import { FlameMark } from './FlameMark'
 import { ProviderLogo } from './ProviderLogo'
 import { motionClass, motionEnabled, reducedMotion } from '../lib/motion'
+import { t } from '../lib/i18n/index'
 import { codeburn } from '../lib/ipc'
 import type { ScanProgressEvent } from '../lib/types'
 import { version } from '../../package.json'
@@ -73,7 +74,7 @@ function SplashStatus({ progress }: { progress: Progress }) {
   const counter = active === 'claude' && progress.claudeTotal > 0
     ? ` · ${progress.claudeDone.toLocaleString('en-US')}/${progress.claudeTotal.toLocaleString('en-US')}`
     : ''
-  const line = active ? `Indexing ${providerLabel(active)}${counter}` : 'Indexing your usage history…'
+  const line = active ? `${t('Indexing {v}', { v: providerLabel(active) })}${counter}` : t('Indexing your usage history…')
   return (
     <div className="splash-status">
       <div className="splash-status-line">{line}</div>
@@ -86,7 +87,7 @@ function SplashStatus({ progress }: { progress: Progress }) {
           ))}
         </div>
       )}
-      <div className="splash-status-note">One-time scan · future launches are instant</div>
+      <div className="splash-status-note">{t('One-time scan · future launches are instant')}</div>
     </div>
   )
 }

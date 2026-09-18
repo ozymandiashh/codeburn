@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 
 import { version } from '../../package.json'
 import { codeburn } from '../lib/ipc'
+import { t } from '../lib/i18n/index'
 import { isModifierChord, shortcutLabel } from '../lib/platform'
 import type { CompanionStatus } from '../lib/types'
 import { AboutModal } from './AboutModal'
@@ -88,14 +89,14 @@ export function Sidebar({
         </div>
         {NAV_GROUPS.map(group => (
           <div className="grp" key={group.label ?? 'top'}>
-            {group.label ? <div className="grp-label">{group.label}</div> : null}
+            {group.label ? <div className="grp-label">{t(group.label)}</div> : null}
             {group.items.map(item => (
               <div
                 key={item.id}
                 className={item.id === active ? 'ni on' : 'ni'}
                 role="button"
                 aria-current={item.id === active ? 'page' : undefined}
-                data-tip={`${item.label} ${shortcutLabel(item.key)}`}
+                data-tip={`${t(item.label)} ${shortcutLabel(item.key)}`}
                 tabIndex={0}
                 onClick={() => onNavigate(item.id)}
                 onKeyDown={e => {
@@ -106,7 +107,7 @@ export function Sidebar({
                 }}
               >
                 {item.icon}
-                <span className="ni-label">{item.label}</span>
+                <span className="ni-label">{t(item.label)}</span>
                 <span className="k">{shortcutLabel(item.key)}</span>
               </div>
             ))}

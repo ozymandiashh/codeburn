@@ -1091,6 +1091,8 @@ export interface CodeburnBridge {
   getPlans(period: Period, background?: boolean): Promise<StatusJson>
   getActReport(): Promise<ActReportJson>
   readonly platform: string
+  /** The Electron app's UI language tag (app.getLocale()); '' when unknown. */
+  readonly appLocale?: string
   /** Node process.arch of the host ('arm64', 'x64', ...). Absent on preloads
    *  that predate the direct-download update link. */
   readonly arch?: string

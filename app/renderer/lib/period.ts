@@ -1,6 +1,8 @@
+import { currentLocaleTag, t } from './i18n/index'
 import type { DailyHistoryEntry, Period } from './types'
 
 /** Same words the desktop TopBar and empty states must use. `all` is last six months, not lifetime. */
+
 export const PERIOD_LABELS: Record<Period, string> = {
   today: 'Today',
   week: 'Last 7 days',
@@ -8,6 +10,11 @@ export const PERIOD_LABELS: Record<Period, string> = {
   '30days': 'Last 30 days',
   all: 'Last 6 months',
   lifetime: 'Lifetime',
+}
+
+/** Localized period label; the English table above stays the source of keys. */
+export function periodLabel(period: Period): string {
+  return t(PERIOD_LABELS[period])
 }
 
 // The CLI emits `history.daily` as a SPARSE list of active days only (not a
@@ -117,5 +124,5 @@ export function contiguousDailyWindow(daily: DailyHistoryEntry[], fromKey: strin
 /** Format a local date key for compact chart-axis labels such as "Jul 1". */
 export function formatChartDate(dateKey: string): string {
   const [year, month, day] = dateKey.split('-').map(Number)
-  return new Date(year, month - 1, day).toLocaleString('en-US', { month: 'short', day: 'numeric' })
+  return new Date(year, month - 1, day).toLocaleString(currentLocaleTag(), { month: 'short', day: 'numeric' })
 }
