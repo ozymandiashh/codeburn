@@ -26,6 +26,7 @@ import {
   detectIdleCompactionBlocked,
   commandNames,
   detectGhostCommands,
+  detectGhostSkills,
   detectDuplicateReads,
   detectJunkReads,
   detectLowReadEditRatio,
@@ -495,6 +496,62 @@ describe('detectGhostCommands', () => {
   })
 })
 
+describe('detectGhostSkills', () => {
+  const skillsDir = join(FAKE_HOME_FOR_MOCK, '.claude', 'skills')
+
+  function defineSkills(...names: string[]): void {
+    rmSync(skillsDir, { recursive: true, force: true })
+    for (const name of names) {
+      mkdirSync(join(skillsDir, name), { recursive: true })
+      writeFileSync(join(skillsDir, name, 'SKILL.md'), `# ${name}\n`)
+    }
+  }
+
+  afterEach(() => {
+    rmSync(skillsDir, { recursive: true, force: true })
+  })
+
+  it('flags skills invoked neither via the Skill tool nor as a slash command', async () => {
+    defineSkills('ontology', 'release-notes')
+    const finding = await detectGhostSkills([], [])
+    expect(finding?.id).toBe('unused-skills')
+    expect(finding?.apply).toEqual({ kind: 'archive', names: expect.arrayContaining(['ontology', 'release-notes']) })
+  })
+
+  it('counts skills invoked through the Skill tool as used', async () => {
+    defineSkills('ontology', 'unused-one')
+    const calls: ToolCall[] = [{
+      name: 'Skill',
+      input: { skill: 'ontology' },
+      sessionId: 's1',
+      project: 'p1',
+    }]
+    const finding = await detectGhostSkills(calls, [])
+    expect(finding?.id).toBe('unused-skills')
+    expect(finding?.apply).toEqual({ kind: 'archive', names: ['unused-one'] })
+  })
+
+  it('counts skills invoked as /name (<command-name>/name</command-name>) as used', async () => {
+    defineSkills('ontology', 'unused-one')
+    const invoked = commandNames('<command-message>ontology</command-message><command-name>/ontology</command-name>')
+    const finding = await detectGhostSkills([], invoked)
+    expect(finding?.id).toBe('unused-skills')
+    expect(finding?.apply).toEqual({ kind: 'archive', names: ['unused-one'] })
+  })
+
+  it('returns null when every defined skill was invoked either way', async () => {
+    defineSkills('ontology', 'deploy')
+    const calls: ToolCall[] = [{
+      name: 'Skill',
+      input: { skill: 'deploy' },
+      sessionId: 's1',
+      project: 'p1',
+    }]
+    const invoked = commandNames('<command-name>/ontology</command-name>')
+    expect(await detectGhostSkills(calls, invoked)).toBeNull()
+  })
+})
+
 // ============================================================================
 // scanJsonlFile
 // ============================================================================
@@ -876,11 +933,11 @@ describe('scanAndDetect', () => {
     // directories out of ~/.claude/skills. Reporting a Codex-labelled finding
     // is a wrong number; offering to archive every skill off one is a wrong
     // number with side effects.
-    async function applyDryRun(provider: string): Promise<string> {
+    async function applyDryRun(provider: string, seed = 3): Promise<string> {
       const chunks: string[] = []
       const output = new Writable({ write(c, _e, cb) { chunks.push(String(c)); cb() } })
       const errorOutput = new Writable({ write(_c, _e, cb) { cb() } })
-      await runOptimizeApply([projectFixture(3)], undefined, { provider, dryRun: true, output, errorOutput })
+      await runOptimizeApply([projectFixture(seed)], undefined, { provider, dryRun: true, output, errorOutput })
       return chunks.join('')
     }
 
@@ -895,6 +952,33 @@ describe('scanAndDetect', () => {
 
       const claude = await applyDryRun('claude')
       expect(claude).toContain('never-invoked')
+    })
+
+    it('does not flag or plan archiving a skill invoked as /name in a Claude transcript', async () => {
+      const projDir = join(CLAUDE_DIR, 'projects', 'slash-skill-proj')
+      mkdirSync(projDir, { recursive: true })
+      const now = new Date().toISOString()
+      writeFileSync(join(projDir, 'session.jsonl'), JSON.stringify({
+        type: 'user',
+        timestamp: now,
+        cwd: '/tmp/provider-scope',
+        message: {
+          content: '<command-message>ontology</command-message>\n<command-name>/ontology</command-name>\n<command-args>list types</command-args>',
+        },
+      }) + '\n')
+
+      mkdirSync(join(CLAUDE_DIR, 'skills', 'ontology'), { recursive: true })
+      writeFileSync(join(CLAUDE_DIR, 'skills', 'ontology', 'SKILL.md'), '# ontology\n')
+      mkdirSync(join(CLAUDE_DIR, 'skills', 'stale-skill'), { recursive: true })
+      writeFileSync(join(CLAUDE_DIR, 'skills', 'stale-skill', 'SKILL.md'), '# stale\n')
+
+      const result = await scanAndDetect([projectFixture(4)], undefined, 'claude')
+      const unusedSkills = result.findings.find(f => f.id === 'unused-skills')
+      expect(unusedSkills?.apply).toEqual({ kind: 'archive', names: ['stale-skill'] })
+
+      const claude = await applyDryRun('claude', 4)
+      expect(claude).toContain('stale-skill')
+      expect(claude).not.toContain('ontology')
     })
   })
 })

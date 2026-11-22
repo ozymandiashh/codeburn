@@ -3545,14 +3545,18 @@ export async function detectGhostAgents(calls: ToolCall[]): Promise<WasteFinding
   }
 }
 
-export async function detectGhostSkills(calls: ToolCall[]): Promise<WasteFinding | null> {
+export async function detectGhostSkills(calls: ToolCall[], slashCommandNames: readonly string[] = []): Promise<WasteFinding | null> {
   const defined = await listSkillDirs(join(homedir(), '.claude', 'skills'))
   if (defined.length === 0) return null
 
   const invoked = new Set<string>()
+  for (const name of slashCommandNames) {
+    const cleaned = name.trim().replace(/^\//, '')
+    if (cleaned) invoked.add(cleaned)
+  }
   for (const call of calls) {
     if (call.name !== 'Skill') continue
-    const skillName = (call.input.skill as string) || (call.input.name as string)
+    const skillName = ((call.input.skill as string) || (call.input.name as string) || '').trim().replace(/^\//, '')
     if (skillName) invoked.add(skillName)
   }
 
@@ -4587,7 +4591,7 @@ export async function scanAndDetect(
   const ghostResults = scanCoversClaude
     ? await Promise.all([
       detectGhostAgents(toolCalls),
-      detectGhostSkills(toolCalls),
+      detectGhostSkills(toolCalls, commandNames),
       detectGhostCommands(commandNames),
     ])
     : []
