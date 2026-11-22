@@ -6,15 +6,22 @@
 //     Response: usagePercent (0..100), nextResetTimestampUtc,
 //     hasNonZeroIncludedLimit, usesPooledEnterpriseAllowance, grokPlanLabel.
 //
-// Credential: the Cursor IDE's OWN access token, unencrypted in its VS Code
-// state database under `cursorAuth/accessToken`, opened read-only. Grok Bot
-// keeps its own copy of the same Cursor session in Electron safe storage, which
-// CodeBurn never decrypts, so this reading is Grok Bot's only while the Cursor
-// app is signed into the account Grok Bot uses.
+// Credential: the Cursor IDE's OWN access token in its VS Code state database
+// under `cursorAuth/accessToken`, opened read-only. Cursor 3.27+ wraps that
+// token in `cursor-safe-storage:v1:` (Chromium v10), unlocked on macOS through
+// the shared Cursor Safe Storage helper under the desktop Keychain consent
+// policy. Grok Bot keeps its own copy of the same Cursor session in Electron
+// safe storage, which CodeBurn never decrypts, so this reading is Grok Bot's
+// only while the Cursor app is signed into the account Grok Bot uses.
 import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
+import {
+  cursorLockedMessage,
+  unlockCursorSafeStorageToken,
+  type CursorKeychainReader,
+} from './cursor-safe-storage'
 import { quotaRequestSignal, sanitizeError } from './security'
 import type { QuotaProvider, QuotaWindow } from './types'
 
@@ -29,6 +36,10 @@ const UNAVAILABLE_FOOTER = ['Grok Bot quota is temporarily unavailable.']
 const PARSE_FOOTER = ['Cursor returned an unrecognized Grok Bot quota response.']
 const NO_ALLOWANCE_FOOTER = ['This account has no included Grok Bot allowance.']
 const POOLED_FOOTER = ['Grok Bot usage is drawn from a pooled enterprise allowance, which has no per-account reading.']
+const REFUSED_FOOTER = {
+  denied: ['Keychain access to Cursor Safe Storage was denied.'],
+  unanswered: ['The Keychain prompt for Cursor Safe Storage was not answered.'],
+}
 
 /** Cursor is an Electron app, so its state database follows the VS Code layout
  *  of whichever platform it runs on. */
@@ -84,6 +95,8 @@ export type GrokbotDeps = {
   fetch: typeof fetch
   databasePath: string
   loadAccessToken: (databasePath: string) => Promise<string | null>
+  readKeychain?: CursorKeychainReader
+  platform: string
 }
 
 function defaults(): GrokbotDeps {
@@ -91,6 +104,7 @@ function defaults(): GrokbotDeps {
     fetch: globalThis.fetch,
     databasePath: cursorDatabasePath(),
     loadAccessToken: cursorAccessTokenFromDatabase,
+    platform: process.platform,
   }
 }
 
@@ -137,7 +151,7 @@ export function decodeGrokbotUsage(body: unknown): QuotaProvider | 'noAllowance'
 }
 
 export async function fetchGrokbotQuota(
-  options: Partial<GrokbotDeps> & { signal?: AbortSignal } = {},
+  options: Partial<GrokbotDeps> & { signal?: AbortSignal; allowKeychain?: boolean } = {},
 ): Promise<{ quota: QuotaProvider; retryAfterSeconds?: number }> {
   const deps = { ...defaults(), ...options }
   let token: string | null
@@ -150,6 +164,21 @@ export async function fetchGrokbotQuota(
     return { quota: empty('transientFailure', UNREADABLE_FOOTER) }
   }
   if (!token) return { quota: empty('disconnected', SIGNED_OUT_FOOTER) }
+
+  const unlocked = await unlockCursorSafeStorageToken(token, {
+    allowKeychain: Boolean(options.allowKeychain),
+    platform: deps.platform,
+    readKeychain: deps.readKeychain,
+  })
+  if (unlocked.status === 'unchecked') return { quota: empty('keychainUnchecked') }
+  if (unlocked.status === 'unsupported') return { quota: empty('terminalFailure', [unlocked.message]) }
+  if (unlocked.status === 'accessDenied') {
+    return { quota: empty('accessDenied', unlocked.reason ? REFUSED_FOOTER[unlocked.reason] : [cursorLockedMessage('darwin')]) }
+  }
+  if (unlocked.status === 'locked') {
+    return { quota: empty('accessDenied', [cursorLockedMessage('darwin')]) }
+  }
+  token = unlocked.token
 
   try {
     const response = await deps.fetch(USAGE_ENDPOINT, {

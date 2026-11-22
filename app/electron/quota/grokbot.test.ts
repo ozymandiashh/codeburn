@@ -1,10 +1,27 @@
+import { createCipheriv, pbkdf2Sync } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { afterAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  decryptCursorSafeStorage,
+  forgetCursorSafeStorageConsent,
+  memoizeCursorKeychainReader,
+  SAFE_STORAGE_ACCOUNTS,
+  SAFE_STORAGE_SERVICE,
+  type CursorKeychainReader,
+} from './cursor-safe-storage'
 import { cursorDatabasePath, decodeGrokbotUsage, fetchGrokbotQuota, grokbotInstalled } from './grokbot'
+
+function wrapSafeStorageToken(jwt: string, password: string): string {
+  const key = pbkdf2Sync(Buffer.from(password, 'utf8'), 'saltysalt', 1003, 16, 'sha1')
+  const iv = Buffer.alloc(16, 0x20)
+  const cipher = createCipheriv('aes-128-cbc', key, iv)
+  const encrypted = Buffer.concat([Buffer.from('v10', 'utf8'), cipher.update(jwt, 'utf8'), cipher.final()])
+  return `cursor-safe-storage:v1:${encrypted.toString('base64')}`
+}
 
 // The live response shape, captured from the account the app itself reads.
 const liveBody = {
@@ -118,5 +135,134 @@ describe('Grok Bot install detection', () => {
     expect(cursorDatabasePath('darwin', '/h')).toBe('/h/Library/Application Support/Cursor/User/globalStorage/state.vscdb')
     expect(cursorDatabasePath('win32', '/h')).toBe('/h/AppData/Roaming/Cursor/User/globalStorage/state.vscdb')
     expect(cursorDatabasePath('linux', '/h')).toBe('/h/.config/Cursor/User/globalStorage/state.vscdb')
+  })
+})
+
+describe('Cursor Safe Storage token unlock', () => {
+  const password = 'synthetic-keychain-secret'
+  const plainJwt = 'synthetic.jwt.payload'
+  const wrapped = wrapSafeStorageToken(plainJwt, password)
+
+  beforeEach(() => forgetCursorSafeStorageConsent())
+
+  it('decrypts v1/v10 safe-storage blobs and trims trailing security -w newlines', () => {
+    expect(decryptCursorSafeStorage(wrapped, `${password}\n`)).toBe(plainJwt)
+    expect(decryptCursorSafeStorage(wrapped, 'wrong-password')).toBeNull()
+    expect(decryptCursorSafeStorage('cursor-safe-storage:v2:abc', password)).toBeNull()
+    expect(decryptCursorSafeStorage(plainJwt, password)).toBe(plainJwt)
+  })
+
+  it('reports keychainUnchecked on a macOS background poll before user consent and never touches Keychain or fetch', async () => {
+    const fetchMock = vi.fn(async () => okJson(liveBody)) as unknown as typeof fetch
+    const readKeychain = vi.fn<CursorKeychainReader>(async () => ({ status: 'found', value: password }))
+
+    const { quota } = await fetchGrokbotQuota({
+      ...deps(fetchMock, wrapped),
+      platform: 'darwin',
+      allowKeychain: false,
+      readKeychain,
+    })
+
+    expect(quota.connection).toBe('keychainUnchecked')
+    expect(readKeychain).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('unlocks on a user-initiated refresh, sends the unwrapped bearer, and keeps background polls working afterward', async () => {
+    const fetchMock = vi.fn(async () => okJson(liveBody)) as unknown as typeof fetch
+    const readKeychain = vi.fn<CursorKeychainReader>(async () => ({ status: 'found', value: `${password}\n` }))
+
+    const first = await fetchGrokbotQuota({
+      ...deps(fetchMock, wrapped),
+      platform: 'darwin',
+      allowKeychain: true,
+      readKeychain,
+    })
+    expect(first.quota.connection).toBe('connected')
+    expect(readKeychain).toHaveBeenCalledTimes(1)
+    expect(readKeychain).toHaveBeenCalledWith(SAFE_STORAGE_SERVICE, SAFE_STORAGE_ACCOUNTS)
+    expect(SAFE_STORAGE_ACCOUNTS).not.toContain(null)
+    const firstHeaders = (fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls[0]![1].headers
+    expect(firstHeaders.Authorization).toBe(`Bearer ${plainJwt}`)
+
+    // Same wrapped blob on a background poll reuses the opened JWT without re-reading Keychain.
+    const second = await fetchGrokbotQuota({
+      ...deps(fetchMock, wrapped),
+      platform: 'darwin',
+      allowKeychain: false,
+      readKeychain,
+    })
+    expect(second.quota.connection).toBe('connected')
+    expect(readKeychain).toHaveBeenCalledTimes(1)
+
+    // A rotated wrapped blob after consent reads Keychain in the background and decrypts the new JWT.
+    const rotatedJwt = 'synthetic.rotated.jwt'
+    const rotatedWrapped = wrapSafeStorageToken(rotatedJwt, password)
+    const third = await fetchGrokbotQuota({
+      ...deps(fetchMock, rotatedWrapped),
+      platform: 'darwin',
+      allowKeychain: false,
+      readKeychain,
+    })
+    expect(third.quota.connection).toBe('connected')
+    expect(readKeychain).toHaveBeenCalledTimes(2)
+    const thirdHeaders = (fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls[2]![1].headers
+    expect(thirdHeaders.Authorization).toBe(`Bearer ${rotatedJwt}`)
+  })
+
+  it('stops on Deny or unanswered prompt, clears consent, and never sends ciphertext as a bearer', async () => {
+    const fetchMock = vi.fn(async () => okJson(liveBody)) as unknown as typeof fetch
+    const allow = vi.fn<CursorKeychainReader>(async () => ({ status: 'found', value: password }))
+    await fetchGrokbotQuota({ ...deps(fetchMock, wrapped), platform: 'darwin', allowKeychain: true, readKeychain: allow })
+    ;(fetchMock as unknown as ReturnType<typeof vi.fn>).mockClear()
+
+    const deny = vi.fn<CursorKeychainReader>(async () => ({ status: 'accessDenied', reason: 'denied' }))
+    const denied = await fetchGrokbotQuota({
+      ...deps(fetchMock, wrapped),
+      platform: 'darwin',
+      allowKeychain: true,
+      readKeychain: deny,
+    })
+    expect(denied.quota.connection).toBe('accessDenied')
+    expect(denied.quota.footerLines[0]).toContain('denied')
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    // Consent was cleared on Deny, so the next background poll does not touch Keychain.
+    const afterDeny = await fetchGrokbotQuota({
+      ...deps(fetchMock, wrapped),
+      platform: 'darwin',
+      allowKeychain: false,
+      readKeychain: deny,
+    })
+    expect(afterDeny.quota.connection).toBe('keychainUnchecked')
+    expect(deny).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports unsupported wrapped tokens on Windows/Linux without sending ciphertext', async () => {
+    const fetchMock = vi.fn(async () => okJson(liveBody)) as unknown as typeof fetch
+    const readKeychain = vi.fn<CursorKeychainReader>(async () => ({ status: 'found', value: password }))
+
+    const win = await fetchGrokbotQuota({
+      ...deps(fetchMock, wrapped),
+      platform: 'win32',
+      allowKeychain: true,
+      readKeychain,
+    })
+    expect(win.quota.connection).toBe('terminalFailure')
+    expect(win.quota.footerLines[0]).toContain('Windows')
+    expect(readKeychain).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('shares one Keychain read across concurrent callers via memoizeCursorKeychainReader', async () => {
+    const underlying = vi.fn<CursorKeychainReader>(async () => ({ status: 'found', value: password }))
+    const shared = memoizeCursorKeychainReader(underlying)
+    const [a, b] = await Promise.all([
+      shared(SAFE_STORAGE_SERVICE, SAFE_STORAGE_ACCOUNTS),
+      shared(SAFE_STORAGE_SERVICE, SAFE_STORAGE_ACCOUNTS),
+    ])
+    expect(a).toEqual({ status: 'found', value: password })
+    expect(b).toEqual({ status: 'found', value: password })
+    expect(underlying).toHaveBeenCalledTimes(1)
   })
 })

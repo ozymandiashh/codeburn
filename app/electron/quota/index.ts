@@ -48,7 +48,7 @@ const defaultDeps: QuotaDeps = {
   antigravity: async () => ({ quota: await fetchAntigravityQuota() }),
   kimi: fetchKimiQuota,
   zcode: fetchZcodeQuota,
-  grokbot: options => fetchGrokbotQuota({ signal: options.signal }),
+  grokbot: options => fetchGrokbotQuota({ signal: options.signal, allowKeychain: options.allowKeychain }),
   grokbotInstalled,
   claudeCredentialKey: () => currentClaudeCredentialKey(claudeConfigDir()),
   statePath: path.join(os.homedir(), '.codeburn', 'quota-backoff.json'),
