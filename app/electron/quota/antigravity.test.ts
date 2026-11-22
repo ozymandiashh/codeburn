@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { classifyProcessLine, decodeAntigravityStatus, decodeAntigravitySummary, fetchAntigravityQuota, parseNetstatPorts } from './antigravity'
+import {
+  classifyProcessLine,
+  decodeAgyUsageOutput,
+  decodeAntigravityStatus,
+  decodeAntigravitySummary,
+  fetchAntigravityQuota,
+  findAgyExecutable,
+  parseNetstatPorts,
+} from './antigravity'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -206,5 +214,131 @@ describe('Antigravity local probe', () => {
 
     expect(parseNetstatPorts(stdout, '4321')).toEqual([51234, 51999])
     expect(parseNetstatPorts(stdout, '1')).toEqual([])
+  })
+
+  it('matches Windows backslash app paths, quoted CSRF flags, and agy.exe', () => {
+    expect(classifyProcessLine(
+      '4322 "C:\\Users\\x\\AppData\\Local\\Programs\\Antigravity\\bin\\language_server.exe" --extension_server_csrf_token="win-tok"',
+    )).toEqual({ pid: '4322', cli: false, csrf: 'win-tok', extPort: undefined })
+    expect(classifyProcessLine('4323 "C:\\Users\\x\\AppData\\Local\\Programs\\Antigravity\\bin\\agy.exe" serve'))
+      .toMatchObject({ pid: '4323', cli: true })
+  })
+})
+
+describe('agy CLI fallback', () => {
+  const agyPayload = JSON.stringify({
+    command: {
+      data: {
+        groups: [
+          {
+            name: 'Gemini Models',
+            buckets: [
+              { name: 'Weekly limit', remaining_fraction: 0.9, reset_time: '2026-11-28T00:00:00Z' },
+              { name: 'Five hour limit', remaining_fraction: 0.4, reset_time: '2026-11-22T22:00:00Z' },
+            ],
+          },
+        ],
+      },
+    },
+  })
+
+  const winTokenlessServer = '4321 C:\\Users\\x\\AppData\\Local\\Programs\\Antigravity\\language_server.exe --app_data_dir=antigravity'
+
+  it('decodes agy -p /usage --output-format json groups', () => {
+    const windows = decodeAgyUsageOutput(agyPayload)
+    expect(windows.map(row => row.label)).toEqual([
+      'Gemini Models · Weekly limit',
+      'Gemini Models · Five hour limit',
+    ])
+    expect(windows[0]!.percent).toBeCloseTo(0.1)
+    expect(windows[1]!.percent).toBeCloseTo(0.6)
+    expect(windows[1]!.resetsAt).toBe('2026-11-22T22:00:00.000Z')
+    expect(decodeAgyUsageOutput('not json')).toEqual([])
+  })
+
+  it('never spawns agy during background polls even when language_server.exe has no --csrf_token', async () => {
+    const findAgyExecutable = vi.fn(() => 'C:\\Users\\x\\AppData\\Local\\Programs\\Antigravity\\bin\\agy.exe')
+    const execAgy = vi.fn(async () => agyPayload)
+    const quota = await fetchAntigravityQuota({
+      platform: 'win32',
+      execFile: async () => ({ stdout: `${winTokenlessServer}\r\n` }),
+      request: vi.fn(async () => null),
+      findAgyExecutable,
+      execAgy,
+    })
+    expect(quota.connection).toBe('disconnected')
+    expect(findAgyExecutable).not.toHaveBeenCalled()
+    expect(execAgy).not.toHaveBeenCalled()
+  })
+
+  it('falls back to agy -p /usage on user-initiated refresh when Windows language_server.exe has no --csrf_token', async () => {
+    const execAgy = vi.fn(async () => agyPayload)
+    const quota = await fetchAntigravityQuota({
+      platform: 'win32',
+      allowCliFallback: true,
+      execFile: async () => ({ stdout: `${winTokenlessServer}\r\n` }),
+      request: vi.fn(async () => null),
+      findAgyExecutable: () => 'C:\\Users\\x\\AppData\\Local\\Programs\\Antigravity\\bin\\agy.cmd',
+      execAgy,
+    })
+    expect(execAgy).toHaveBeenCalledTimes(1)
+    expect(quota.connection).toBe('connected')
+    expect(quota.primary?.label).toBe('Gemini Models · Five hour limit')
+    expect(quota.primary?.percent).toBeCloseTo(0.6)
+    expect(quota.details).toHaveLength(2)
+  })
+
+  it('skips agy fallback when a loopback language server answers', async () => {
+    const execAgy = vi.fn(async () => agyPayload)
+    const quota = await fetchAntigravityQuota({
+      platform: 'darwin',
+      allowCliFallback: true,
+      execFile: async (_file, args) => args[0] === '-ax'
+        ? { stdout: appLine }
+        : { stdout: 'server 1234 user 12u IPv4 0x1 0t0 TCP 127.0.0.1:60123 (LISTEN)\n' },
+      request: async () => ({
+        status: 200,
+        text: JSON.stringify({ groups: [{ displayName: 'Gemini', buckets: [{ displayName: 'Weekly', remainingFraction: 0.8 }] }] }),
+      }),
+      findAgyExecutable: () => '/usr/local/bin/agy',
+      execAgy,
+    })
+    expect(quota.connection).toBe('connected')
+    expect(execAgy).not.toHaveBeenCalled()
+  })
+
+  it('never logs the agy response body when it yields no quota buckets', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const quota = await fetchAntigravityQuota({
+      platform: 'win32',
+      allowCliFallback: true,
+      execFile: async () => ({ stdout: '' }),
+      request: vi.fn(async () => null),
+      findAgyExecutable: () => 'C:\\Tools\\agy.exe',
+      execAgy: async () => JSON.stringify({ command: { data: { groups: [] }, marker: 'AGY-SECRET-BODY' } }),
+    })
+    expect(quota.connection).toBe('disconnected')
+    const logged = warn.mock.calls.flat().join(' ')
+    expect(logged).not.toContain('AGY-SECRET-BODY')
+  })
+
+  it('resolves Windows agy executable from known paths and ignores relative PATH entries', () => {
+    const found = findAgyExecutable(
+      'win32',
+      { LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local', PATH: '.;relative\\bin;C:\\Tools' },
+      'C:\\Users\\x',
+      filePath => filePath === 'C:\\Users\\x\\AppData\\Local\\Programs\\Antigravity\\bin\\agy.cmd',
+    )
+    expect(found).toBe('C:\\Users\\x\\AppData\\Local\\Programs\\Antigravity\\bin\\agy.cmd')
+
+    const checked: string[] = []
+    const fromRelativeOnly = findAgyExecutable(
+      'win32',
+      { PATH: '.;relative\\bin' },
+      'C:\\Users\\x',
+      filePath => { checked.push(filePath); return false },
+    )
+    expect(fromRelativeOnly).toBeNull()
+    expect(checked.every(p => /^[a-zA-Z]:[\\/]/.test(p))).toBe(true)
   })
 })

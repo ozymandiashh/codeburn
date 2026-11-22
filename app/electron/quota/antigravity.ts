@@ -1,8 +1,11 @@
 // Live Antigravity quota from LOCAL surfaces only - the Antigravity app's own
 // language server or a signed-in `agy` CLI's embedded server. The local
-// Antigravity language-server protocol is undocumented and
-// experimental). No Google OAuth fallback in v1: when no local server answers,
-// the provider reports disconnected and the UI shows its Connect affordance.
+// Antigravity language-server protocol is undocumented and experimental.
+// When no local server answers, a user-initiated refresh may also spawn
+// `agy -p /usage --output-format json` once (the CLI boots a throwaway server
+// and prints the same groups), while background polls never spawn it. No Google
+// OAuth fallback: when no local surface answers, the provider reports
+// disconnected and the UI shows its Connect affordance.
 //
 // Endpoints (localhost only, Connect-RPC JSON):
 // - POST https://127.0.0.1:<port>/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary
@@ -15,8 +18,11 @@
 // `netstat` on Windows, which has neither. Local HTTPS uses a self-signed cert,
 // so TLS verification is relaxed ONLY for the 127.0.0.1 loopback probes.
 import { execFile } from 'node:child_process'
+import { accessSync, constants, statSync } from 'node:fs'
 import http from 'node:http'
 import https from 'node:https'
+import os from 'node:os'
+import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { fraction, sanitizeError } from './security'
@@ -25,6 +31,8 @@ import type { QuotaProvider, QuotaWindow } from './types'
 const SUMMARY_PATH = '/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary'
 const STATUS_PATH = '/exa.language_server_pb.LanguageServerService/GetUserStatus'
 const LOCAL_TIMEOUT_MS = 3_000
+const AGY_CLI_TIMEOUT_MS = 75_000
+const AGY_USAGE_ARGS = ['-p', '/usage', '--output-format', 'json', '--print-timeout', '60s']
 
 export type ExecFileFn = (file: string, args: string[]) => Promise<{ stdout: string }>
 export type LocalRequestFn = (
@@ -40,9 +48,93 @@ export type AntigravityDeps = {
   request: LocalRequestFn
   /// Which process listing to ask for. Injected so both branches are testable from either OS.
   platform: string
+  /// Only a user-initiated refresh may spawn `agy -p /usage` (~20-60s cold boot);
+  /// background polls leave this false and never spawn the CLI.
+  allowCliFallback: boolean
+  /// Resolves an executable `agy` path on disk, or null when the CLI is not installed.
+  findAgyExecutable: () => string | null
+  /// Runs `agy -p /usage --output-format json` for the CLI fallback.
+  execAgy: (executable: string, signal?: AbortSignal) => Promise<string>
+  signal?: AbortSignal
 }
 
-const execFileAsync: ExecFileFn = promisify(execFile)
+const execFileAsync = promisify(execFile)
+const execFileDefault: ExecFileFn = (file, args) => execFileAsync(file, args)
+
+function isUsableFile(filePath: string, platform: string): boolean {
+  try {
+    const stats = statSync(filePath)
+    if (!stats.isFile()) return false
+    if (platform !== 'win32') accessSync(filePath, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/// Finds an absolute path to the `agy` CLI without relying on Windows CWD search.
+export function findAgyExecutable(
+  platform: string = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+  exists: (filePath: string) => boolean = filePath => isUsableFile(filePath, platform),
+): string | null {
+  const candidates: string[] = []
+  const seen = new Set<string>()
+  const push = (candidate: string) => {
+    const key = platform === 'win32' ? candidate.toLowerCase() : candidate
+    if (!seen.has(key)) {
+      seen.add(key)
+      candidates.push(candidate)
+    }
+  }
+
+  if (platform === 'win32') {
+    const localAppData = env['LOCALAPPDATA']?.trim()
+    const appData = env['APPDATA']?.trim()
+    const winNames = ['agy.exe', 'agy.cmd']
+    if (localAppData) {
+      for (const name of winNames) {
+        push(path.win32.join(localAppData, 'Programs', 'Antigravity', 'bin', name))
+        push(path.win32.join(localAppData, 'Programs', 'Antigravity', 'resources', 'app', 'bin', name))
+      }
+    }
+    for (const name of winNames) push(path.win32.join(home, '.local', 'bin', name))
+    if (appData) push(path.win32.join(appData, 'npm', 'agy.cmd'))
+    const rawPath = env['PATH'] ?? env['Path'] ?? ''
+    for (const entry of rawPath.split(';')) {
+      const dir = entry.trim().replace(/^"(.*)"$/, '$1')
+      // Skip relative entries so Windows CWD never hijacks executable lookup.
+      if (!dir || (!/^[a-zA-Z]:[\\/]/.test(dir) && !dir.startsWith('\\\\'))) continue
+      for (const name of winNames) push(path.win32.join(dir, name))
+    }
+  } else {
+    push(path.posix.join(home, '.local', 'bin', 'agy'))
+    push('/opt/homebrew/bin/agy')
+    push('/usr/local/bin/agy')
+    for (const entry of (env['PATH'] ?? '').split(':')) {
+      const dir = entry.trim()
+      if (!dir.startsWith('/')) continue
+      push(path.posix.join(dir, 'agy'))
+    }
+  }
+
+  return candidates.find(exists) ?? null
+}
+
+async function execAgyDefault(executable: string, signal?: AbortSignal, platform: string = process.platform): Promise<string> {
+  const timeout = AbortSignal.timeout(AGY_CLI_TIMEOUT_MS)
+  const combined = signal ? AbortSignal.any([signal, timeout]) : timeout
+  const opts = { signal: combined, maxBuffer: 2 * 1024 * 1024, windowsHide: true }
+  if (platform === 'win32' && /\.(?:cmd|bat)$/i.test(executable)) {
+    // Reject shell metacharacters before invoking cmd.exe for a .cmd shim.
+    if (/[\r\n\0&|<>^%!]/.test(executable)) throw new Error('Unsafe agy shim path')
+    const { stdout } = await execFileAsync(system32('cmd.exe'), ['/d', '/c', executable, ...AGY_USAGE_ARGS], opts)
+    return stdout
+  }
+  const { stdout } = await execFileAsync(executable, AGY_USAGE_ARGS, opts)
+  return stdout
+}
 
 function postLocal(port: number, tls: boolean, pathName: string, body: string, csrf?: string): Promise<{ status: number; text: string } | null> {
   return new Promise(resolve => {
@@ -70,10 +162,15 @@ function postLocal(port: number, tls: boolean, pathName: string, body: string, c
   })
 }
 
-const defaults: AntigravityDeps = {
-  execFile: execFileAsync,
-  request: postLocal,
-  platform: process.platform,
+function defaultDeps(platform: string = process.platform): AntigravityDeps {
+  return {
+    execFile: execFileDefault,
+    request: postLocal,
+    platform,
+    allowCliFallback: false,
+    findAgyExecutable: () => findAgyExecutable(platform),
+    execAgy: (executable, signal) => execAgyDefault(executable, signal, platform),
+  }
 }
 
 function empty(connection: QuotaProvider['connection']): QuotaProvider {
@@ -87,14 +184,15 @@ function empty(connection: QuotaProvider['connection']): QuotaProvider {
 const LANGUAGE_SERVER = /language[_-]server(_macos)?(_arm)?/
 const IDE_MARKER = /antigravity[-_]ide/i
 const CLI_MARKER = /antigravity[-_]cli/i
-const AGY_BINARY = /(^|\/|\s)agy(\s|$)/
-const APP_MARKER = /--app_data_dir[= ]"?antigravity(?![\w-])|\/antigravity\//i
+const AGY_BINARY = /(^|[\\/\s"])agy(?:\.(?:exe|cmd))?(?="|\s|$)/i
+const APP_MARKER = /--app_data_dir[= ]"?antigravity(?![\w-])|[\\/]antigravity[\\/]/i
+const CSRF_FLAGS = ['--csrf_token', '--extension_server_csrf_token', '--csrf-token', '--extension-server-csrf-token']
 
 type Candidate = { pid: string; cli: boolean; csrf?: string; extPort?: number }
 
 function flagValue(line: string, flag: string): string | undefined {
-  const match = line.match(new RegExp(`${flag}[= ]([^\\s]+)`))
-  return match?.[1]
+  const match = line.match(new RegExp(`${flag}[= ](?:"([^"]+)"|([^\\s"]+))`))
+  return match?.[1] ?? match?.[2]
 }
 
 export function classifyProcessLine(line: string): Candidate | null {
@@ -107,7 +205,7 @@ export function classifyProcessLine(line: string): Candidate | null {
   // server can be found; the CLI exposes no CSRF flag and needs none. IDE
   // language servers are excluded too - their payloads lack the weekly groups.
   if (!isCli && (!APP_MARKER.test(line) || IDE_MARKER.test(line))) return null
-  const csrf = flagValue(line, '--csrf_token')
+  const csrf = CSRF_FLAGS.map(flag => flagValue(line, flag)).find(Boolean)
   if (!isCli && !csrf) return null
   const extPort = Number(flagValue(line, '--extension_server_port'))
   return { pid, cli: isCli, csrf, extPort: Number.isFinite(extPort) && extPort > 0 ? extPort : undefined }
@@ -266,15 +364,82 @@ async function probePort(deps: AntigravityDeps, port: number, csrf?: string): Pr
   return null
 }
 
+/** `agy -p /usage --output-format json` payload: `command.data.groups` carry
+ *  buckets with snake_case fields (`name`, `remaining_fraction`, `reset_time`). */
+export function decodeAgyUsageOutput(text: string): QuotaWindow[] {
+  const root = parseJson(text)
+  const obj = root && typeof root === 'object' ? root as Record<string, any> : null
+  const groups = Array.isArray(obj?.command?.data?.groups)
+    ? obj.command.data.groups
+    : Array.isArray(obj?.data?.groups)
+      ? obj.data.groups
+      : Array.isArray(obj?.groups)
+        ? obj.groups
+        : []
+  const windows: QuotaWindow[] = []
+  for (const group of groups) {
+    const groupName = typeof group?.name === 'string' && group.name.trim()
+      ? group.name.trim()
+      : typeof group?.displayName === 'string' && group.displayName.trim()
+        ? group.displayName.trim()
+        : ''
+    for (const bucket of Array.isArray(group?.buckets) ? group.buckets : []) {
+      const bucketName = typeof bucket?.name === 'string' && bucket.name.trim()
+        ? bucket.name.trim()
+        : typeof bucket?.displayName === 'string' && bucket.displayName.trim()
+          ? bucket.displayName.trim()
+          : typeof bucket?.bucketId === 'string' && bucket.bucketId.trim()
+            ? bucket.bucketId.trim()
+            : ''
+      const name = [groupName, bucketName].filter(Boolean).join(' · ')
+      if (!name) continue
+      const window = windowOf(
+        name,
+        bucket?.remaining_fraction ?? bucket?.remainingFraction ?? bucket?.remaining?.remainingFraction,
+        bucket?.reset_time ?? bucket?.resetTime ?? bucket?.remaining?.resetTime,
+      )
+      if (window) windows.push(window)
+    }
+  }
+  return windows
+}
+
 function parseJson(text: string): unknown {
   try { return JSON.parse(text) } catch { return null }
 }
 
+async function refreshViaAgyCli(deps: AntigravityDeps): Promise<QuotaProvider | null> {
+  const executable = deps.findAgyExecutable()
+  if (!executable) return null
+  let output: string
+  try {
+    output = await deps.execAgy(executable, deps.signal)
+  } catch (error) {
+    console.warn(`Antigravity agy quota fallback failed: ${sanitizeError(error)}`)
+    return null
+  }
+  const windows = decodeAgyUsageOutput(output).sort((a, b) => b.percent - a.percent)
+  if (windows.length === 0) {
+    // Concurrent pollers can make the CLI's throwaway server answer 503 with
+    // empty groups — never log the response body, just report disconnected so
+    // the user can click Refresh again.
+    console.warn('Antigravity agy quota fallback produced no quota buckets')
+    return null
+  }
+  return {
+    provider: 'antigravity',
+    connection: 'connected',
+    primary: windows[0] ?? null,
+    details: windows,
+    planLabel: null,
+    footerLines: [],
+  }
+}
+
 export async function fetchAntigravityQuota(deps: Partial<AntigravityDeps> = {}): Promise<QuotaProvider> {
-  const resolved = { ...defaults, ...deps }
+  const resolved = { ...defaultDeps(deps.platform), ...deps }
   try {
     const candidates = await discoverCandidates(resolved)
-    if (candidates.length === 0) return empty('disconnected')
     for (const candidate of candidates) {
       const ports = await listeningPorts(resolved, candidate.pid)
       if (candidate.extPort !== undefined && !ports.includes(candidate.extPort)) ports.push(candidate.extPort)
@@ -291,6 +456,10 @@ export async function fetchAntigravityQuota(deps: Partial<AntigravityDeps> = {})
           }
         }
       }
+    }
+    if (resolved.allowCliFallback) {
+      const cliQuota = await refreshViaAgyCli(resolved)
+      if (cliQuota) return cliQuota
     }
     return empty('disconnected')
   } catch (error) {

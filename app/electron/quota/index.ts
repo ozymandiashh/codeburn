@@ -44,8 +44,14 @@ const defaultDeps: QuotaDeps = {
   gemini: fetchGeminiQuota,
   copilot: fetchCopilotQuota,
   // The Antigravity probe talks only to localhost surfaces (no credentials,
-  // no remote endpoints), so it ignores the abort/keychain options entirely.
-  antigravity: async () => ({ quota: await fetchAntigravityQuota() }),
+  // no remote endpoints). Only a user-initiated refresh (allowKeychain=true)
+  // may fall back to spawning `agy -p /usage` (~20-60s cold boot).
+  antigravity: async options => ({
+    quota: await fetchAntigravityQuota({
+      signal: options.signal,
+      allowCliFallback: options.allowKeychain,
+    }),
+  }),
   kimi: fetchKimiQuota,
   zcode: fetchZcodeQuota,
   grokbot: options => fetchGrokbotQuota({ signal: options.signal }),

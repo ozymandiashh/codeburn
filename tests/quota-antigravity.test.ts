@@ -138,4 +138,48 @@ describe.each([['CLI', cli], ['Electron', desktop]] as const)('%s Antigravity 2.
     expect(quota.details).toEqual(reader.decodeAntigravityStatus(status))
     expect(request).toHaveBeenCalledTimes(2)
   })
+
+  it('falls back to agy -p /usage on user-initiated refresh when Windows language_server.exe omits --csrf_token', async () => {
+    const agyPayload = JSON.stringify({
+      command: {
+        data: {
+          groups: [{
+            name: 'Gemini Models',
+            buckets: [{ name: 'Weekly limit', remaining_fraction: 0.4, reset_time: '2026-11-28T00:00:00Z' }],
+          }],
+        },
+      },
+    })
+    const execAgy = vi.fn(async () => agyPayload)
+    const winExec: cli.ExecFileFn = async () => ({
+      stdout: '4321 C:\\Users\\x\\AppData\\Local\\Programs\\Antigravity\\language_server.exe --app_data_dir=antigravity\r\n',
+    })
+    const request = vi.fn<cli.LocalRequestFn>(async () => null)
+
+    const bg = await reader.fetchAntigravityQuota({
+      execFile: winExec,
+      request,
+      platform: 'win32',
+      findAgyExecutable: () => 'C:\\Users\\x\\AppData\\Local\\Programs\\Antigravity\\bin\\agy.exe',
+      execAgy,
+    })
+    expect(bg.connection).toBe('disconnected')
+    expect(execAgy).not.toHaveBeenCalled()
+
+    const forced = await reader.fetchAntigravityQuota({
+      execFile: winExec,
+      request,
+      platform: 'win32',
+      allowCliFallback: true,
+      findAgyExecutable: () => 'C:\\Users\\x\\AppData\\Local\\Programs\\Antigravity\\bin\\agy.exe',
+      execAgy,
+    })
+    expect(forced.connection).toBe('connected')
+    expect(forced.primary).toEqual({
+      label: 'Gemini Models · Weekly limit',
+      percent: 0.6,
+      resetsAt: '2026-11-28T00:00:00.000Z',
+    })
+    expect(execAgy).toHaveBeenCalledTimes(1)
+  })
 })
